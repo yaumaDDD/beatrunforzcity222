@@ -20,13 +20,14 @@ CreateClientConVar("Beatrun_ZCity_SlideWeapon", "1", true, false, "Armed slide: 
 CreateConVar("Beatrun_ZCity_SlideNoDamage", "1", REP, "A slide protects from Z-City impact damage and injuries", 0, 1)
 CreateConVar("Beatrun_ZCity_RollMinSpeed", "250", REP, "Minimum fall speed at which a timed roll activates", 0, 2000)
 CreateConVar("Beatrun_ZCity_RollMinHeight", "70", REP, "Minimum fall height (units) a timed roll is allowed to play on: a hop or a step down never turns into a roll", 0, 400)
-CreateConVar("Beatrun_ZCity_RollBigHeight", "260", REP, "Fall height (units) from which the hard landing / crouched roll variant plays and the protection window grows", 80, 1200)
+CreateConVar("Beatrun_ZCity_RollBigHeight", "350", REP, "Fall height (units) from which a real roll plays instead of the knee landing, and the protection window grows", 80, 1200)
 
 -- Ledge climb & hang (Beatrun climb.lua, ported to this addon's scheme)
 CreateConVar("Beatrun_ZCity_ClimbEnabled", "1", REP, "Enable Beatrun ledge climb / hang in Z-City", 0, 1)
 CreateConVar("Beatrun_ZCity_ClimbHangHeight", "74", REP, "Ledge climb: how far (units) the body hangs below the ledge edge while gripping", 40, 120)
-CreateConVar("Beatrun_ZCity_ClimbMaxLedgeHeight", "68", REP, "Ledge climb: maximum ledge height above your feet that can be grabbed", 24, 110)
-CreateConVar("Beatrun_ZCity_ClimbReach", "52", REP, "Ledge climb: how far ahead of you a wall is detected (units)", 24, 96)
+CreateConVar("Beatrun_ZCity_ClimbMaxLedgeHeight", "84", REP, "Ledge climb: maximum ledge height above your feet that can be grabbed", 24, 140)
+CreateConVar("Beatrun_ZCity_ClimbLowHeight", "46", REP, "Ledge climb: up to this height you vault onto the wall (vaultonto), above it you hang and pull yourself up (hangheaveup)", 12, 120)
+CreateConVar("Beatrun_ZCity_ClimbReach", "60", REP, "Ledge climb: how far ahead of you a wall is detected (units)", 24, 120)
 CreateConVar("Beatrun_ZCity_ClimbHoldDelay", "0.35", REP, "Ledge climb: how long you hang before holding W pulls you up", 0, 2)
 CreateConVar("Beatrun_ZCity_ClimbHeaveTime", "0.55", REP, "Ledge climb: duration of the pull-up (seconds)", 0.2, 1.5)
 CreateConVar("Beatrun_ZCity_ClimbCooldown", "0.45", REP, "Ledge climb: delay after a climb before the next grab can start", 0, 3)
@@ -34,7 +35,7 @@ CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether
 CreateConVar("Beatrun_ZCity_SlideSteer", "0", REP, "Allow changing the slide course with strafe keys (0 = course is fixed)", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideShoot", "1", REP, "Allow free aiming and shooting during a slide", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideYawLimit", "90", REP, "Maximum left/right look and aim angle (degrees) relative to slide direction while sliding with a weapon (0 = unlimited)", 0, 180)
-CreateConVar("Beatrun_RollAnim", "0", REP, "Safety roll animation: 0 = plain landing animation, 1 = the full roll", 0, 1)
+CreateConVar("Beatrun_RollAnim", "0", REP, "Safety roll animation: 0 = chosen by fall height (big fall = roll, lower = knee landing), 1 = always the roll, 2 = always the knee landing", 0, 2)
 CreateConVar("Beatrun_RollAlways", "1", REP, "Always play the roll animation when the safety roll triggers (0 = plain landing animation when the player is standing still)", 0, 1)
 
 if CLIENT then

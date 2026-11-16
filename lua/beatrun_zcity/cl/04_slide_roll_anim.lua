@@ -193,14 +193,11 @@ function BeatrunSlideAnimAbort()
 	RemoveBodyAnim(false)
 end
 
-function BeatrunRollAnimStart(isLandInPlace, bigFall)
+-- kneeLanding = the Mirror's Edge "land" pose (drop onto one knee, no forward launch),
+-- lowRoll     = the extra low/crouched roll used for very long drops
+function BeatrunRollAnimStart(kneeLanding, lowRoll)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
-
-	-- "Land in place" becomes a real roll unless the player asked for the old behaviour
-	if isLandInPlace and cvRollAlways and cvRollAlways:GetBool() then
-		isLandInPlace = false
-	end
 
 	local holster = not cvRollHolster or cvRollHolster:GetBool()
 	local holdingWeapon = false
@@ -217,21 +214,21 @@ function BeatrunRollAnimStart(isLandInPlace, bigFall)
 		holdingWeapon = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh"
 	end
 
-	-- Beatrun_RollAnim 0 = plain landing animation, 1 = the actual roll
-	local useRoll = not (cvRollAnim and cvRollAnim:GetInt() == 0)
-
-	-- Height decides the pose (2.21.7): a hard fall from a roof lands crouched / rolls crouched, a short
-	-- drop keeps the normal landing. The rig has land*, land*crouch, meroll* and meroll*crouch.
+	-- Height decides the pose (2.21.8):
+	--   lower than RollBigHeight -> "land" / "landgun"     (knee landing, like Beatrun)
+	--   RollBigHeight and up     -> "meroll" / "merollgun" (the actual safety roll)
+	--   twice RollBigHeight      -> "merollcrouch" / "merollguncrouch" (low roll for huge drops)
 	local animName
 	local speed
-	if isLandInPlace or not useRoll then
-		animName = bigFall and (holdingWeapon and "landguncrouch" or "landcrouch")
-			or (holdingWeapon and "landgun" or "land")
-		speed = bigFall and 0.95 or 1.05
+	if kneeLanding then
+		animName = holdingWeapon and "landgun" or "land"
+		speed = 1.05
+	elseif lowRoll then
+		animName = holdingWeapon and "merollguncrouch" or "merollcrouch"
+		speed = 0.95
 	else
-		animName = bigFall and (holdingWeapon and "merollguncrouch" or "merollcrouch")
-			or (holdingWeapon and "merollgun" or "meroll")
-		speed = bigFall and 0.95 or 1.15
+		animName = holdingWeapon and "merollgun" or "meroll"
+		speed = 1.15
 	end
 
 	-- The same animation may be requested twice (client prediction + the network trigger) - don't restart it
@@ -254,7 +251,7 @@ function BeatrunRollAnimStart(isLandInPlace, bigFall)
 		camjoint = "CameraJoint",
 		deleteonend = true,
 		followplayer = true,
-		lockang = useRoll and not isLandInPlace,
+		lockang = not kneeLanding,
 		allowmove = true,
 		BodyAnimSpeed = speed,
 		StartAngle = startAng
@@ -296,7 +293,8 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 
 	if rolling and not sliding and rollEndTime > lastRollToken and not IsValid(BodyAnim) then
 		local ang = ply:GetSafetyRollAng()
-		BeatrunRollAnimStart(ang == angle_zero, (ply._BRZRollVariant or 1) >= 2)
+		local variant = ply._BRZRollVariant or 2
+		BeatrunRollAnimStart(variant == 1, variant == 3)
 	end
 end)
 
@@ -314,9 +312,9 @@ net.Receive("Beatrun_ZC_SlideEnd", function()
 end)
 
 net.Receive("Beatrun_ZC_RollStart", function()
-	local isLandInPlace = net.ReadBool()
-	local bigFall = net.ReadBool()
-	BeatrunRollAnimStart(isLandInPlace, bigFall)
+	local kneeLanding = net.ReadBool()
+	local lowRoll = net.ReadBool()
+	BeatrunRollAnimStart(kneeLanding, lowRoll)
 end)
 
 if game.SinglePlayer() then
@@ -332,8 +330,8 @@ if game.SinglePlayer() then
 	end)
 
 	net.Receive("RollAnimSP", function()
-		local isLandInPlace = net.ReadBool()
-		local bigFall = net.ReadBool()
-		BeatrunRollAnimStart(isLandInPlace, bigFall)
+		local kneeLanding = net.ReadBool()
+		local lowRoll = net.ReadBool()
+		BeatrunRollAnimStart(kneeLanding, lowRoll)
 	end)
 end

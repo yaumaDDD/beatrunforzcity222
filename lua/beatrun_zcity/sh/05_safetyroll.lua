@@ -256,7 +256,6 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	ply:SetSafetyRollKeyTime(0)
 	ply._BRZRollProtectUntil = CT + protectTime
 	ply._BRZRollHeight = fallHeight
-	ply._BRZRollVariant = bigFall and 2 or 1
 
 	local mobility = BeatrunGetMobilityFactor(ply)
 	ply:SetRollLoss(mobility < 0.75)
@@ -270,34 +269,55 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	local horizVel = ply:GetVelocity()
 	horizVel.z = 0
 
-	local isLandInPlace = horizVel:Length() < 160 or ply:KeyDown(IN_BACK)
+	local standingStill = horizVel:Length() < 160 or ply:KeyDown(IN_BACK)
 
-	-- The roll was requested by the player, so play a real roll instead of the plain landing animation.
-	-- Beatrun_RollAlways 0 restores the old behaviour (standing still / holding back = normal landing).
-	if isLandInPlace and not ply:KeyDown(IN_BACK) and (not cvRollAlways or cvRollAlways:GetBool()) then
-		isLandInPlace = false
+	-- 2.21.8: the fall height decides which trick you get, not a convar.
+	--   Beatrun_RollAnim 0 (default) -> height decides: >= RollBigHeight = real roll, lower = knee landing
+	--   Beatrun_RollAnim 1          -> always the roll animation
+	--   Beatrun_RollAnim 2          -> always the knee landing
+	local rollMode = cvRollAnim and cvRollAnim:GetInt() or 0
+	local useRoll
+	if rollMode == 2 then
+		useRoll = false
+	elseif rollMode == 1 then
+		useRoll = true
+	else
+		useRoll = bigFall
 	end
 
-	-- Beatrun_RollAnim 0: a plain landing instead of a rolling one - no forward push, shorter window
-	local useRoll = not (cvRollAnim and cvRollAnim:GetInt() == 0)
+	-- Beatrun_RollAlways 0 keeps the old escape hatch: standing still / holding back = knee landing
+	if useRoll and standingStill and not ply:KeyDown(IN_BACK) and (not cvRollAlways or cvRollAlways:GetBool()) then
+		standingStill = false
+	end
+	if useRoll and standingStill and (not cvRollAlways or not cvRollAlways:GetBool()) then
+		useRoll = false
+	end
 
-	-- How long the roll owns the player: a drop from a roof rolls noticeably longer than a fence hop.
+	-- An extremely long drop gets the low, crouched roll on top of the normal one
+	local lowRoll = useRoll and fallHeight >= bigHeight * 2
+
+	ply._BRZRollVariant = useRoll and (lowRoll and 3 or 2) or 1
+
+	-- How long the trick owns the player: a drop from a roof rolls noticeably longer than a fence hop.
 	local rollSeconds = math.Clamp(0.85 + fallHeight / 520, 0.85, 1.7)
-	if bigFall then rollSeconds = math.min(rollSeconds, 1.9) end
+	if useRoll then rollSeconds = math.min(rollSeconds, 1.9) end
 	ply._BRZRollSeconds = rollSeconds
 
-	if isLandInPlace or not useRoll then
+	if not useRoll then
+		-- Knee landing (Mirror's Edge "land" pose, like Beatrun's in-place landing): you drop onto one
+		-- knee, you do not launch forward.
 		ply:SetSafetyRollAng(landang)
-		ply:SetSafetyRollTime(CT + math.min(rollSeconds, 0.8))
+		ply:SetSafetyRollTime(CT + math.Clamp(rollSeconds, 0.6, 0.85))
+		ply._BRZRollSlowFactor = nil
 	else
 		ply:SetSafetyRollAng(ang)
 		ply:SetSafetyRollTime(CT + rollSeconds)
-	end
 
-	-- The heavier the fall, the less of it is turned into a forward sprint - you absorb, you don't launch.
-	if bigFall and not isLandInPlace then
+		-- The heavier the fall, the less of it is turned into a forward sprint - you absorb, you don't launch.
 		ply._BRZRollSlowFactor = math.Clamp(1 - (fallHeight - bigHeight) / 2600, 0.62, 1)
 	end
+
+	local isLandInPlace = not useRoll
 
 	-- Immediately stow any held firearm/melee/item to bare hands when entering the safety roll
 	HolsterWeaponForTrick(ply)
@@ -330,19 +350,19 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	end
 
 	if CLIENT and IsFirstTimePredicted() and BeatrunRollAnimStart then
-		BeatrunRollAnimStart(isLandInPlace, bigFall)
+		BeatrunRollAnimStart(isLandInPlace, lowRoll)
 	elseif SERVER then
 		if game.SinglePlayer() then
 			net.Start("RollAnimSP")
 				net.WriteBool(isLandInPlace)
-				net.WriteBool(bigFall)
+				net.WriteBool(lowRoll)
 				net.Send(ply)
 		else
 			-- Dedicated server: push the animation to the owning client too, so it never depends on
 			-- prediction alone (that was why the roll sometimes never played for the player himself).
 			net.Start("Beatrun_ZC_RollStart")
 				net.WriteBool(isLandInPlace)
-				net.WriteBool(bigFall)
+				net.WriteBool(lowRoll)
 				net.Send(ply)
 		end
 	end

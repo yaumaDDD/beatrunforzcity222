@@ -18,6 +18,7 @@ local ALLOWED_CONVARS = {
 	["beatrun_zcity_climbenabled"] = true,
 	["beatrun_zcity_climbhangheight"] = true,
 	["beatrun_zcity_climbmaxledgeheight"] = true,
+	["beatrun_zcity_climblowheight"] = true,
 	["beatrun_zcity_climbreach"] = true,
 	["beatrun_zcity_climbholddelay"] = true,
 	["beatrun_zcity_climbheavetime"] = true,

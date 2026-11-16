@@ -66,6 +66,11 @@ function BeatrunZCityClimbAnimHeave(ang, low)
 	local dur = low and 0.45 or math.max(0.2, cvHeaveTime and cvHeaveTime:GetFloat() or 0.55)
 	local seqName = low and "vaultonto" or "hangheaveup"
 
+	local cvDebug = GetConVar("Beatrun_RollDebugLog")
+	if cvDebug and cvDebug:GetBool() then
+		print(string.format("[Beatrun Z-City] climb anim: %s (%.2fs, rig %s)", seqName, dur, GetRigName()))
+	end
+
 	StartBodyAnim({
 		AnimString = seqName,
 		animmodelstring = GetRigName(),
@@ -84,7 +89,7 @@ function BeatrunZCityClimbAnimHeave(ang, low)
 	if IsValid(BodyAnim) then
 		local seqDur = BodyAnim:SequenceDuration()
 		if seqDur and seqDur > 0.05 then
-			BodyAnimSpeed = math.Clamp(seqDur / dur, 0.6, 3)
+			BodyAnimSpeed = math.Clamp(seqDur / dur, 0.7, 1.8)
 		end
 	end
 end

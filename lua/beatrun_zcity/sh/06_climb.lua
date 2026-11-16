@@ -12,6 +12,7 @@
 local cvEnabled = GetConVar("Beatrun_ZCity_ClimbEnabled")
 local cvHangHeight = GetConVar("Beatrun_ZCity_ClimbHangHeight")
 local cvMaxLedge = GetConVar("Beatrun_ZCity_ClimbMaxLedgeHeight")
+local cvLowHeight = GetConVar("Beatrun_ZCity_ClimbLowHeight")
 local cvReach = GetConVar("Beatrun_ZCity_ClimbReach")
 local cvHoldDelay = GetConVar("Beatrun_ZCity_ClimbHoldDelay")
 local cvHeaveTime = GetConVar("Beatrun_ZCity_ClimbHeaveTime")
@@ -62,41 +63,23 @@ local standTable = {}
 local floorTable = {}
 local hangTable = {}
 
-local function FindLedge(ply, mv, eyeang)
-	local mins, maxs = ply:GetHull()
-	local origin = mv:GetOrigin()
-	local reach = cvReach:GetFloat()
-
-	local fwd = eyeang:Forward()
-	fwd = Vector(fwd.x, fwd.y, math.Clamp(fwd.z, -0.6, 0.5))
-	if fwd:LengthSqr() < 0.001 then return end
-	fwd:Normalize()
-
-	-- 1) the wall itself
-	wallTable.start = origin + Vector(0, 0, maxs.z * 0.55)
-	wallTable.endpos = wallTable.start + fwd * reach
-	wallTable.filter = ply
-	wallTable.mask = MASK_PLAYERSOLID
-
-	local wall = util.TraceLine(wallTable)
-	if not wall.Hit or wall.Fraction <= 0 then return end
-
-	local normal = wall.HitNormal
+local function ProbeLedge(ply, origin, hit, eyeang, reach, mins, maxs)
+	local normal = hit.HitNormal
 	if math.abs(normal.z) > 0.4 then return end
-	if IsValid(wall.Entity) and wall.Entity.NoClimbing then return end
+	if IsValid(hit.Entity) and hit.Entity.NoClimbing then return end
 
 	local wallang = normal:Angle()
 	wallang.y = wallang.y + 180 -- forward points INTO the wall, exactly like Beatrun
 	wallang.x, wallang.z = 0, 0
 	if math.abs(math.AngleDifference(wallang.y, eyeang.y)) > 60 then return end
 
-	-- 2) push the standing hull into the wall and look for a ledge top it can rest on
-	local flat = wall.HitPos - origin
+	-- push the standing hull into the wall and look for a ledge top it can rest on
+	local flat = hit.HitPos - origin
 	flat.z = 0
 	local dist = flat:Length()
 	local lead = math.Clamp(dist + math.max(maxs.x, maxs.y) + 4, 26, 62)
 
-	local up = math.max(maxs.z * 0.9, 48)
+	local up = math.max(maxs.z * 0.9, 64)
 	local probeStart = Vector(origin.x, origin.y, origin.z + up) + wallang:Forward() * lead
 
 	ledgeHull.mins = Vector(mins.x, mins.y, 0)
@@ -104,7 +87,7 @@ local function FindLedge(ply, mv, eyeang)
 	ledgeHull.filter = ply
 	ledgeHull.mask = MASK_PLAYERSOLID
 	ledgeHull.start = probeStart
-	ledgeHull.endpos = probeStart - Vector(0, 0, up + 100)
+	ledgeHull.endpos = probeStart - Vector(0, 0, up + 130)
 
 	local ledge = util.TraceHull(ledgeHull)
 	if not ledge.Hit then return end
@@ -118,7 +101,7 @@ local function FindLedge(ply, mv, eyeang)
 
 	local standPos = Vector(ledge.HitPos.x, ledge.HitPos.y, topZ + 1)
 
-	-- 3) that spot has to be free for the player's own hull, with a floor under it
+	-- that spot has to be free for the player's own hull, with a floor under it
 	standTable.start = standPos
 	standTable.endpos = standPos
 	standTable.mins = Vector(mins.x, mins.y, 1)
@@ -133,9 +116,9 @@ local function FindLedge(ply, mv, eyeang)
 	floorTable.mask = MASK_PLAYERSOLID
 	if not util.TraceLine(floorTable).Hit then return end
 
-	-- 4) the hanging body: hands on the ledge edge, feet in the air
+	-- the hanging body: hands on the ledge edge, feet in the air
 	local radius = math.max(maxs.x, maxs.y) + 1.5
-	local hangPos = Vector(wall.HitPos.x, wall.HitPos.y, 0) + normal * radius
+	local hangPos = Vector(hit.HitPos.x, hit.HitPos.y, 0) + normal * radius
 	hangPos.z = topZ - cvHangHeight:GetFloat()
 
 	hangTable.start = hangPos
@@ -157,12 +140,43 @@ local function FindLedge(ply, mv, eyeang)
 	}
 end
 
+local function FindLedge(ply, mv, eyeang)
+	local mins, maxs = ply:GetHull()
+	local origin = mv:GetOrigin()
+	local reach = cvReach:GetFloat()
+
+	local fwd = eyeang:Forward()
+	fwd = Vector(fwd.x, fwd.y, math.Clamp(fwd.z, -0.6, 0.5))
+	if fwd:LengthSqr() < 0.001 then return end
+	fwd:Normalize()
+
+	-- 2.21.8: probe at three heights instead of only at the chest. A waist-high wall has nothing in
+	-- front of your chest, and that is why the low "vault onto the wall" climb never fired.
+	local heights = { maxs.z * 0.85, maxs.z * 0.5, math.min(maxs.z * 0.22, 16) }
+
+	for i = 1, #heights do
+		wallTable.start = origin + Vector(0, 0, heights[i])
+		wallTable.endpos = wallTable.start + fwd * reach
+		wallTable.filter = ply
+		wallTable.mask = MASK_PLAYERSOLID
+
+		local wall = util.TraceLine(wallTable)
+		if wall.Hit and wall.Fraction > 0 then
+			local ledge = ProbeLedge(ply, origin, wall, eyeang, reach, mins, maxs)
+			if ledge then
+				ledge.probeHeight = heights[i]
+				return ledge
+			end
+		end
+	end
+end
+
 -- ---------------------------------------------------------------------------
 -- State changes
 -- ---------------------------------------------------------------------------
 local StartHeave
 
-local function StartGrab(ply, mv, ledge, CT)
+local function StartGrab(ply, mv, ledge, CT, fromGround)
 	local grabSpeed = math.max(0, -mv:GetVelocity().z)
 	local hard = grabSpeed > 420
 	local origin = mv:GetOrigin()
@@ -176,11 +190,24 @@ local function StartGrab(ply, mv, ledge, CT)
 		BeatrunZCityHolsterForTrick(ply)
 	end
 
-	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f", ledge.height, ledge.dist, grabSpeed)
+	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f -> %s", ledge.height, ledge.dist, grabSpeed,
+		(ledge.height <= cvLowHeight:GetFloat()) and "vault (vaultonto)" or "hang (hangheaveup)")
 
-	-- No room to hang below this ledge (a floor right under it, or you are standing on the ground):
-	-- pull straight up onto it instead of hanging in the air
-	if not isvector(ledge.hangPos) then
+	-- Two different climbs by height (2.21.8), exactly like the rig's two animations:
+	--   low ledge (ClimbLowHeight and below) -> vault onto the wall        (vaultonto)
+	--   higher ledge                         -> hang, then pull up on W   (hangheaveup)
+	-- No room to hang below the ledge (a floor right under it) also falls back to the vault.
+	-- From the ground (jump or sprint into the wall) the height picks the animation: a low ledge is
+	-- vaulted, a higher one is hung on. Catching a ledge while falling always goes through the hang,
+	-- because hanging is what that looks like.
+	local lowLedge
+	if fromGround then
+		lowLedge = ledge.height <= cvLowHeight:GetFloat() or not isvector(ledge.hangPos)
+	else
+		lowLedge = not isvector(ledge.hangPos)
+	end
+
+	if lowLedge then
 		ply._BRZClimbLow = true
 		ply._BRZClimbHangPos = Vector(origin)
 
@@ -446,34 +473,53 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 	local vel = mv:GetVelocity()
 
 	local jumpWindow = (ply._BRZClimbJumpWindow or 0) > CT
+	local sprintInto = false
 
 	if onground then
-		-- Only an intentional jump at the wall: running along a wall must never lift you up.
-		-- The grab itself happens a few ticks later, in the air, like Beatrun's ledge catch.
+		-- Two intentional ways to start a climb from the ground:
+		--   1) press jump at the wall  -> the grab itself happens a few ticks later, in the air
+		--   2) sprint (Shift) + W into the wall -> grab straight away, like Beatrun
 		if mv:KeyPressed(IN_JUMP) then
 			ply._BRZClimbJumpWindow = CT + 0.45
+			return
 		end
-		return
-	end
 
-	if vel.z > 150 and not jumpWindow then
+		if not (mv:KeyDown(IN_SPEED) and mv:KeyDown(IN_FORWARD)) then
+			return
+		end
+
+		sprintInto = true
+	elseif vel.z > 150 and not jumpWindow then
 		return -- still rising fast, the hands are not there yet
 	end
 
 	local eyeang = ply:EyeAngles()
 	local ledge = FindLedge(ply, mv, eyeang)
-	if not ledge then return end
 
-	if not jumpWindow then
-		-- Free falling past a wall only grabs if you push forward or actually fly into it
+	if not ledge then
+		if CT > (ply._BRZClimbLogAt or 0) then
+			ply._BRZClimbLogAt = CT + 0.5
+			Log("no ledge: wall not found or the ledge is not standable (ClimbReach %.0f, ClimbMaxLedgeHeight %.0f)",
+				cvReach:GetFloat(), cvMaxLedge:GetFloat())
+		end
+		return
+	end
+
+	if sprintInto then
+		-- only when actually running into that wall
 		local flatVel = Vector(vel.x, vel.y, 0)
-		local towards = flatVel:Dot(ledge.wallang:Forward())
-		if not mv:KeyDown(IN_FORWARD) and towards < 90 then return end
+		if flatVel:Dot(ledge.wallang:Forward()) < 120 then return end
+	elseif not jumpWindow and not onground then
+		-- Falling / flying: catch the ledge without extra keys (Beatrun does the same), but not when
+		-- moving away from the wall.
+		local flatVel = Vector(vel.x, vel.y, 0)
+		if flatVel:Dot(ledge.wallang:Forward()) < -160 then return end
 	else
 		ply._BRZClimbJumpWindow = nil
 	end
 
-	StartGrab(ply, mv, ledge, CT)
+	local fromGround = onground or jumpWindow or sprintInto
+	StartGrab(ply, mv, ledge, CT, fromGround)
 end)
 
 -- Reset on death/spawn so a ragdoll or respawn never leaves a player stuck mid-climb
