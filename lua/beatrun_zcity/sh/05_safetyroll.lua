@@ -322,33 +322,74 @@ local function TrickCanSave(height)
 	return height <= maxHeight
 end
 
+-- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
+-- version, and remembered on the player so a debug panel can repeat it.
+local ADDON_VERSION = "2.21.21"
+
+function ReportLanding(ply, what)
+	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
+		ply._BRZLastLanding = what
+	end
+	print(string.format("[Beatrun Z-City %s] landing: %s", ADDON_VERSION, what))
+end
+
+-- The trick has the landing: the ragdoll Z-City fires on a hard landing must not run on top of it.
+-- _BeatrunRollHandledUntil is one frame (Z-City's own hook fires right after ours), GetSafetyRollTime
+-- covers the whole trick - that is exactly the window where the ragdoll used to eat the animation.
+local function TrickOwnsLanding(ply)
+	if not IsValid(ply) or not ply.IsPlayer then return false end
+	local CT = CurTime()
+	if CT <= (ply._BeatrunRollHandledUntil or 0) then return true end
+	if ply.GetSafetyRollTime and CT < (ply:GetSafetyRollTime() or 0) then return true end
+
+	-- The arm is set while falling, so it is already there when Z-City's own fallStun hook gets to run
+	-- before ours: this landing is the one the trick is for, so its ragdoll must not fire either.
+	if ply._BRZFallArmed then
+		local h = MeasuredFallHeight(ply)
+		local minH = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
+		if h >= minH and TrickCanSave(h) then return true end
+	end
+	return false
+end
+
 -- Runs BEFORE Z-City's fallStun and returns true only when a timed roll mitigates the impact
+-- 2.21.21: every early return leaves a short reason behind, so the one-line landing report says what
+-- actually happened instead of a guess.
+local function Decline(ply, why)
+	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then ply._BRZRollDecline = why end
+end
+
 local function TrySafetyRoll(ply, water, floater, speed)
 	if not IsValid(ply) or not ply:IsPlayer() then return end
-	if water or floater then return end
-	if not cvRollEnabled:GetBool() or not BeatrunCanSlideOrRoll(ply) then return end
+	if water or floater then Decline(ply, "landed in water / on a floater") return end
+	if not cvRollEnabled:GetBool() then Decline(ply, "the trick is disabled in the settings") return end
+	if not BeatrunCanSlideOrRoll(ply) then Decline(ply, "you are not in a rollable state (ragdoll, vehicle, broken legs)") return end
+
+	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then ply._BRZRollDecline = nil end
 
 	local CT = CurTime()
 	local maxSafeSpeed = cvMaxSafeRollSpeed:GetFloat()
 
-	if CT > ply:GetSafetyRollKeyTime() then return end
+	if CT > ply:GetSafetyRollKeyTime() then Decline(ply, "Ctrl was not tapped in the air (or the tap was too early)") return end
 
 	-- The arm belongs to exactly one landing, and a roll that just started must not be re-triggered
 	-- by the next physics frame (that was the other half of the "animation plays twice" bug).
 	ply._BRZFallArmed = nil
-	if CT < (ply._BRZRollStartGuard or 0) then return end
+	if CT < (ply._BRZRollStartGuard or 0) then Decline(ply, "the previous trick had just started") return end
 	ply._BRZRollStartGuard = CT + 0.45
 
 	-- The hard cap used to be 820: any fall faster than that skipped the roll entirely, so the ragdoll
 	-- and the broken legs came through even though the player pressed in time. Now the timing is the
 	-- only condition; a very fast fall is still protected.
 	local hardCap = math.max(maxSafeSpeed, 3000)
-	if speed < cvRollMinSpeed:GetFloat() or speed > hardCap then return end
+	if speed < cvRollMinSpeed:GetFloat() then Decline(ply, string.format("the impact was only %.0f (min %.0f)", speed, cvRollMinSpeed:GetFloat())) return end
+	if speed > hardCap then Decline(ply, string.format("the impact %.0f is beyond the cap", speed)) return end
 
 	-- Height gate (2.21.7): the roll is the answer to a real fall, not to a step down or a normal jump.
 	local fallHeight = MeasuredFallHeight(ply)
 
 	if not TrickCanSave(fallHeight) then
+		Decline(ply, "the fall is above RollMaxHeight")
 		if cvRollDebugLog and cvRollDebugLog:GetBool() then
 			print(string.format("[Beatrun Z-City] fall %.0f units is above RollMaxHeight - no trick, Z-City takes the landing", fallHeight))
 		end
@@ -357,6 +398,7 @@ local function TrySafetyRoll(ply, water, floater, speed)
 
 	local minHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
 	if fallHeight < minHeight then
+		Decline(ply, string.format("a %.0f unit fall is below RollMinHeight (%.0f)", fallHeight, minHeight))
 		if cvRollDebugLog and cvRollDebugLog:GetBool() then
 			print(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - too low for a roll", fallHeight, speed))
 		end
@@ -401,6 +443,14 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- 2.21.19: height only. No "standing still" downgrade and no always-roll override any more - the
 	-- same fall always has to give the same landing, that was the whole point of 2.21.14.
 	ply._BRZRollVariant = variant
+
+	-- 2.21.21: ONE line per landing, always printed (not behind the debug convar). It names the pose and
+	-- the movement, so the console alone tells which branch ran - no more guessing from a screenshot.
+	ReportLanding(ply, string.format("%s (fall %.0f, impact %.0f)",
+		variant == 1 and "KNEE landing - land, stays in place"
+			or (variant == 2 and "ROLL - meroll, carries forward")
+			or "no trick",
+		fallHeight, speed))
 
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
 		local names = { [0] = "nothing", [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
@@ -510,9 +560,13 @@ local function FallStunWrapper(ply, inwater, onfloater, speed)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
 		local CT = CurTime()
 		local rollEnd = (isfunction(ply.GetSafetyRollTime) and ply:GetSafetyRollTime()) or 0
+		-- 2.21.21: "armed" must NOT count as blocked. An arm only means Ctrl was tapped during the fall;
+		-- the landing itself is still undecided. Treating it as handled returned true here without ever
+		-- calling TrySafetyRoll, so when this hook happened to sit before ours the whole trick silently
+		-- disappeared - no pose, no variant, no message - and no change in the decision code could show.
+		-- The ragdoll of an armed fall is kept away by the hg.LightStunPlayer guard below instead.
 		local blocked = CT <= (ply._BeatrunRollHandledUntil or 0)   -- this landing was taken by the roll
 			or CT < rollEnd                                         -- the roll is still playing
-			or ply._BRZFallArmed                                    -- a roll is armed and will take it
 
 		if blocked and not TrickCanSave(MeasuredFallHeight(ply)) then
 			-- 2.21.18: a fall this big is not ours. Drop the arm and let Z-City run its own landing.
@@ -537,6 +591,22 @@ local function FallStunWrapper(ply, inwater, onfloater, speed)
 
 	local ok, consumed = pcall(TrySafetyRoll, ply, inwater, onfloater, speed)
 	if ok and consumed then return true end
+
+	-- 2.21.21: the trick did not take this landing. Say why in one line - "Ctrl was never tapped in the
+	-- air" is by far the most common reason a fall that should be a knee landing ends up as Z-City's own
+	-- ragdoll (which looks exactly like a roll).
+	local protectedWindow = IsValid(ply) and ply.IsPlayer and ply:IsPlayer()
+		and ply._BRZRollProtectUntil and ply._BRZRollProtectUntil > CurTime()
+
+	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() and not TrickOwnsLanding(ply) and not protectedWindow then
+		local h = MeasuredFallHeight(ply)
+		local minH = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
+		if h >= minH - 20 and h >= 100 then
+			ReportLanding(ply, string.format("fall %.0f, impact %.0f - NO trick: %s; Z-City lands you",
+				h, speed, ply._BRZRollDecline or "the trick did not take this landing"))
+		end
+	end
+
 	if FallStunOriginal then return FallStunOriginal(ply, inwater, onfloater, speed) end
 end
 
@@ -545,11 +615,54 @@ local function InstallFallStunGuard()
 	local tables = hook.GetTable()
 	if not istable(tables) then return false end
 	local list = tables["OnPlayerHitGround"]
-	if not istable(list) or not list.fallStun or list.fallStun == FallStunWrapper then return false end
-	FallStunOriginal = FallStunOriginal or list.fallStun
+	if not istable(list) or not list.fallStun then return false end
+	if list.fallStun == FallStunWrapper then return false end
+	-- Somebody (the gamemode loading late, another addon reloading it) put its own hook back under the
+	-- same name: take the fresh original and wrap it again.
+	FallStunOriginal = list.fallStun
 	hook.Add("OnPlayerHitGround", "fallStun", FallStunWrapper)
 	return true
 end
+
+-- 2.21.21: the real reason a 300-unit fall could still look like a roll. Z-City's fallStun ends in
+-- hg.LightStunPlayer(ply, 2), and that function does hg.Fake(ply, nil, true) - its fake ragdoll, which
+-- looks exactly like a tumble/roll. If Z-City's OnPlayerHitGround hook happens to sit on top of our
+-- wrapper (it registers late, or gets re-added), that ragdoll runs even though we already played the
+-- knee landing - so the body rolls, the rig animation disappears mid-air and nothing we change in the
+-- pose matters. Guarding the function itself closes that hole no matter who owns the hook.
+local LightStunOriginal
+
+local function LightStunWrapper(ply, time)
+	if TrickOwnsLanding(ply) then
+		if cvRollDebugLog and cvRollDebugLog:GetBool() then
+			print("[Beatrun Z-City] Z-City light stun (fake ragdoll) blocked - the trick owns this landing")
+		end
+		return
+	end
+	if LightStunOriginal then return LightStunOriginal(ply, time) end
+end
+
+local function InstallLightStunGuard()
+	if not hg or not isfunction(hg.LightStunPlayer) then return false end
+	if hg.LightStunPlayer == LightStunWrapper then return false end
+	LightStunOriginal = hg.LightStunPlayer
+	hg.LightStunPlayer = LightStunWrapper
+	return true
+end
+
+-- Both guards are re-checked once a second: whichever addon/gamemode registers last, the trick keeps
+-- owning its own landing.
+hook.Add("Think", "BeatrunZCity_StunGuardThink", function()
+	if not SERVER then return end
+	local now = CurTime()
+	if now < (GUARD_NEXT_AT or 0) then return end
+	GUARD_NEXT_AT = now + 1
+	local a = InstallLightStunGuard()
+	local b = InstallFallStunGuard()
+	if cvRollDebugLog and cvRollDebugLog:GetBool() and (a or b) then
+		print("[Beatrun Z-City] landing guards re-installed")
+	end
+end)
 
 -- 2.21.7: actually install that guard. If Z-City's fallStun is registered before our roll hook it would
 -- ragdoll the player on a >600 impact before the roll is ever asked about it - this closes that hole.
@@ -642,3 +755,16 @@ if SERVER then
 		return baseDmg * (1 - reduction)
 	end)
 end
+
+-- 2.21.21: one line at start-up with the numbers this copy actually runs with. If a saved config or an
+-- old server.cfg pins a stale value, it shows up here instead of silently turning every fall into a roll.
+timer.Simple(1, function()
+	print(string.format("[Beatrun Z-City %s] landing numbers: knees %.0f..%.0f, roll %.0f..%.0f, above %.0f no trick, min impact %.0f",
+		ADDON_VERSION,
+		cvRollMinHeight and cvRollMinHeight:GetFloat() or 290,
+		cvRollBigHeight and cvRollBigHeight:GetFloat() or 350,
+		cvRollBigHeight and cvRollBigHeight:GetFloat() or 350,
+		cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750,
+		cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750,
+		cvRollMinSpeed and cvRollMinSpeed:GetFloat() or 250))
+end)

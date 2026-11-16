@@ -249,7 +249,10 @@ function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 	-- previous one is always the same landing being triggered twice (prediction + the server trigger,
 	-- a re-armed fall, or the crouch that follows the roll) - a real roll lasts at least that long.
 	local now = CurTime()
-	if now - lastTrickAnimAt < 0.9 then
+	-- 2.21.21: a pose that came from the server THE pose for this fall - never swallow it. These two
+	-- guards exist because client prediction used to start a second animation for the same landing, and
+	-- since 2.21.14 prediction no longer starts anything: they can only eat the correct pose.
+	if not forced and now - lastTrickAnimAt < 0.9 then
 		local cvDbg = GetConVar("Beatrun_RollDebugLog")
 		if cvDbg and cvDbg:GetBool() then
 			print(string.format("[Beatrun Z-City] roll anim SKIPPED (%.2fs after the previous one, %s)",
@@ -353,6 +356,25 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 	end
 end)
 
+-- 2.21.21: the pose the server decided for this landing. If the client cannot play it on the exact frame
+-- the message arrives (a Z-City ragdoll/stun state is one frame old, the player model is being swapped),
+-- try again a few times instead of dropping it - a dropped pose is what left the camera on a ragdoll.
+local function QueueRollAnim(variant, forced, attempt)
+	attempt = attempt or 0
+	local ply = LocalPlayer()
+	if not IsValid(ply) then return end
+
+	if not BeatrunCanSlideOrRoll(ply) then
+		if attempt < 4 then
+			timer.Simple(0.06, function() QueueRollAnim(variant, forced, attempt + 1) end)
+		end
+		return
+	end
+
+	ply._BRZRollVariant = variant
+	BeatrunRollAnimStart(variant, nil, forced)
+end
+
 -- Network triggers: the server tells the owning client when to (re)start or end the animation.
 -- This is the "server side" half of the animation system, so multiplayer never depends on prediction alone.
 net.Receive("Beatrun_ZC_SlideStart", function()
@@ -368,7 +390,7 @@ end)
 
 net.Receive("Beatrun_ZC_RollStart", function()
 	local variant = net.ReadInt(8)
-	BeatrunRollAnimStart(variant, nil, true)
+	QueueRollAnim(variant, true)
 end)
 
 if game.SinglePlayer() then
@@ -385,6 +407,6 @@ if game.SinglePlayer() then
 
 	net.Receive("RollAnimSP", function()
 		local variant = net.ReadInt(8)
-		BeatrunRollAnimStart(variant, nil, true)
+		QueueRollAnim(variant, true)
 	end)
 end
