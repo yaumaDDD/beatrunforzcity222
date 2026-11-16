@@ -15,8 +15,12 @@ local VARS = {
 	{ kind = "Float", key = "BRZ_SlidingDelay", name = "SlidingDelay", default = 0 },
 	{ kind = "Float", key = "BRZ_SlidingVel", name = "SlidingVel", default = 0 },
 	{ kind = "Float", key = "BRZ_SlidingStrafe", name = "SlidingStrafe", default = 0 },
-	{ kind = "Float", key = "BRZ_SafetyRollKeyTime", name = "SafetyRollKeyTime", default = 0 },
-	{ kind = "Float", key = "BRZ_SafetyRollTime", name = "SafetyRollTime", default = 0 },
+	-- 2.21.27: server = true. These two are the landing's identity and its clock, and only the server
+	-- may write them. A client write used to live in _BRZPred for a while, so a client-side reset
+	-- (SetSafetyRollTime(0)) hid the real value; when the server's number then came through, the client
+	-- read that as a brand-new landing and replayed the pose (the double roll in the log).
+	{ kind = "Float", key = "BRZ_SafetyRollKeyTime", name = "SafetyRollKeyTime", default = 0, server = true },
+	{ kind = "Float", key = "BRZ_SafetyRollTime", name = "SafetyRollTime", default = 0, server = true },
 
 	{ kind = "Vector", key = "BRZ_SlidingLastPos", name = "SlidingLastPos", default = vector_origin },
 
@@ -48,6 +52,8 @@ for _, v in ipairs(VARS) do
 	end
 
 	PLAYER[setter] = function(self, val)
+		-- Server-authored values ignore client writes completely (see the server = true comment above).
+		if v.server and CLIENT then return end
 		self._BRZPred = self._BRZPred or {}
 		self._BRZPred[key] = val
 		if SERVER then

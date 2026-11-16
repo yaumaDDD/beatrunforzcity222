@@ -335,7 +335,10 @@ local function ReleaseGrab(ply, mv, CT, jumpOff)
 	mv:SetVelocity(vel)
 
 	-- Dropping off a ledge is a fall: arm the safety roll for it (Ctrl can stay held).
+	-- 2.21.27: the landing gate reads this tap record instead of the replicated key window, so a climb
+	-- drop counts as "the player asked for the trick" exactly like a Ctrl tap does.
 	ply:SetSafetyRollKeyTime(CT + 0.6)
+	ply._BRZFallTappedAt = CT
 	ply._BRZFallPeakZ = nil
 
 	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimEnd) then

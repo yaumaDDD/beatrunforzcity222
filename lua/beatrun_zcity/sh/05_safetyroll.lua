@@ -128,6 +128,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 		-- a new fall starts: the height of the previous landing must not leak into it
 		if wasOnGround then
 			ply._BRZLastFallHeight = nil
+			ply._BRZFallTappedAt = nil   -- 2.21.27: a tap belongs to exactly one fall
 		end
 
 		local peak = ply._BRZFallPeakZ
@@ -146,6 +147,12 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 
 	if airborne and not rollBlocked and (rollPressed or holdingBrace) then
 		ply._BRZFallArmed = true
+		-- 2.21.27: the tap is remembered as a plain field with a timestamp, on the realm that decides
+		-- (the server). The landing gate used to read the replicated 0.5 s window instead, and that window
+		-- can be stale on the landing tick (the arm is dropped on the first grounded frame, and a command
+		-- without IN_DUCK stops refreshing it) - which is what turned a perfectly good tap into
+		-- "Ctrl was not tapped (or the tap was too early)".
+		ply._BRZFallTappedAt = CT
 	end
 
 	-- Armed for this fall: keep the roll armed until the ground arrives and brace the impact ahead of
@@ -154,9 +161,19 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 		ply:SetSafetyRollKeyTime(CT + 0.5)
 		ply._BRZBraced = true
 		ply._BRZBracedUntil = CT + 0.35
-	elseif onground and ply._BRZFallArmed and CT > ply:GetSafetyRollKeyTime() then
-		-- landed without a trick (too low or a bad spot) - the arm has done its job
-		ply._BRZFallArmed = nil
+	end
+
+	-- 2.21.27: the arm now survives the landing itself. Z-City's OnPlayerHitGround runs in the same tick
+	-- as the last SetupMove, so dropping the arm here could erase the tap before the landing was even
+	-- decided. It is cleared a quarter of a second after the ground was touched instead.
+	if onground then
+		ply._BRZGroundedAt = ply._BRZGroundedAt or CT
+		if ply._BRZFallArmed and (CT - ply._BRZGroundedAt) > 0.25 then
+			ply._BRZFallArmed = nil
+			ply._BRZFallTappedAt = nil
+		end
+	else
+		ply._BRZGroundedAt = nil
 	end
 
 	local isArming = CT < ply:GetSafetyRollKeyTime()
@@ -325,7 +342,7 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.26"
+local ADDON_VERSION = "2.21.27"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
@@ -384,7 +401,17 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- animation again from the top - that was the "two animations" you saw in the log.
 	if CT < (ply:GetSafetyRollTime() or 0) then Decline(ply, "the trick is still playing") return end
 
-	if CT > ply:GetSafetyRollKeyTime() then Decline(ply, "Ctrl was not tapped in the air (or the tap was too early)") return end
+	-- 2.21.27: one tap (or held Ctrl) during the fall is enough, and it is read from the tap we recorded
+	-- ourselves instead of the replicated key window, so the landing tick cannot invalidate it.
+	local tappedAt = ply._BRZFallTappedAt
+	if not (ply._BRZFallArmed or (tappedAt and (CT - tappedAt) <= 4)) then
+		Decline(ply, "Ctrl was not tapped in the air")
+		if cvRollDebugLog and cvRollDebugLog:GetBool() then
+			print(string.format("[Beatrun Z-City] no tap: arm=%s tapped=%s keyWindow=%.2f now=%.2f",
+				tostring(ply._BRZFallArmed), tostring(tappedAt), ply:GetSafetyRollKeyTime() or 0, CT))
+		end
+		return
+	end
 
 	-- The arm belongs to exactly one landing, and a roll that just started must not be re-triggered
 	-- by the next physics frame (that was the other half of the "animation plays twice" bug).
@@ -447,6 +474,7 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- and started the trick again (the "two animations" in the log).
 	ply._BRZLastFallHeight = nil
 	ply._BRZFallPeakZ = ply:GetPos().z
+	ply._BRZFallTappedAt = nil
 
 	local mobility = BeatrunGetMobilityFactor(ply)
 	ply:SetRollLoss(mobility < 0.75)

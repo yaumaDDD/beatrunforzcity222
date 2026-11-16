@@ -336,7 +336,6 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 
 	local sliding = ply:GetSliding()
 	local rollEndTime = ply:GetSafetyRollTime()
-	local rolling = CurTime() < rollEndTime
 
 	if not sliding then
 		slideHandled = false
@@ -348,16 +347,11 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 		BeatrunSlideAnimEnd(false, PlayerCannotStand(ply))
 	end
 
-	-- Fallback pose for a landing the server message did not reach us for. One per landing window, and
-	-- never right after another pose (see the 1.2 s rule in BeatrunRollAnimStart).
-	if rolling and not sliding and rollEndTime > lastRollToken and not IsValid(BodyAnim)
-		and (CurTime() - lastRollAnimAt) > 1.2 then
-		local ang = ply:GetSafetyRollAng()
-		-- 2.21.19: never guess "roll" when we have no number for this fall - the gentle knee landing is
-		-- the safe answer, and the server message corrects it upwards if the fall really was a big one.
-		local variant = ply._BRZRollVariant or 1
-		BeatrunRollAnimStart(variant)
-	end
+	-- 2.21.27: NO guessed pose any more. This fallback started a pose on the client whenever the roll
+	-- token looked new, and that is exactly how one landing played twice: the pose was already over, the
+	-- token had just arrived from the server, and the guess defaulted to the knee landing. The pose now
+	-- comes from the server message only (QueueRollAnim retries it if Z-City is not ready yet), so one
+	-- landing can never produce two animations.
 end)
 
 -- 2.21.21: the pose the server decided for this landing. If the client cannot play it on the exact frame
