@@ -310,7 +310,10 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 
 	local mobility = BeatrunGetMobilityFactor(ply)
 	local minSpeed = cvSlideMinSpeed:GetFloat() * (0.85 + 0.15 * mobility)
-	local ableToSlide = duckPressed and sprinting and not aiming and not jumping and horizSpeed >= minSpeed
+	-- 2.21.12: the slide starts on Ctrl alone - Shift is no longer required (holding it still works
+	-- and still lowers the speed gate a little, because a sprinting player is already committed).
+	local requiredSpeed = sprinting and minSpeed * 0.85 or minSpeed
+	local ableToSlide = duckPressed and not aiming and not jumping and horizSpeed >= requiredSpeed
 	local alreadySliding = sliding or (ply:GetSlidingDelay() >= CT)
 	local origin = mv:GetOrigin()
 

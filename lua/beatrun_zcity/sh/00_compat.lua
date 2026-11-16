@@ -6,7 +6,7 @@ local REP_PLAIN = { FCVAR_REPLICATED, FCVAR_ARCHIVE }
 -- Slide & Roll feature toggles and tuning
 CreateConVar("Beatrun_ZCity_SlideEnabled", "1", REP, "Enable Beatrun sprinting slide in Z-City", 0, 1)
 CreateConVar("Beatrun_ZCity_RollEnabled", "1", REP, "Enable Beatrun fall safety roll in Z-City", 0, 1)
-CreateConVar("Beatrun_ZCity_SlideMinSpeed", "190", REP, "Minimum horizontal speed required to initiate a slide (while sprinting)", 100, 350)
+CreateConVar("Beatrun_ZCity_SlideMinSpeed", "190", REP, "Minimum horizontal speed required to initiate a slide (crouch alone; sprinting lowers the gate)", 100, 350)
 CreateConVar("Beatrun_ZCity_OrganismImpact", "1", REP, "Scale slide and roll reliability with Z-City organism health/injuries/pain", 0, 1)
 CreateConVar("Beatrun_ZCity_StaminaDrain", "1", REP, "Drain Z-City organism stamina when sliding or safety-rolling", 0, 1)
 CreateConVar("Beatrun_ZCity_RollFallReduction", "0.65", REP, "Fraction of Z-City fall damage absorbed by a timed safety roll above 650 speed", 0, 1)
