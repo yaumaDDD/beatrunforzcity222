@@ -11,8 +11,10 @@ local ALLOWED_CONVARS = {
 	["beatrun_rollspeedloss"] = true,
 	["beatrun_rollalways"] = true,
 	["beatrun_zcity_slideautohold"] = true,
+	["beatrun_zcity_slideaircheck"] = true,
 	["beatrun_zcity_slideyawlimit"] = true,
 	["beatrun_rollanim"] = true,
+	["beatrun_zcity_rollholster"] = true,
 }
 
 net.Receive("Beatrun_ChangeConvar", function(_, ply)

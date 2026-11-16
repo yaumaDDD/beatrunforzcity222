@@ -79,6 +79,53 @@ local function SafeCall(fn, ...)
 	return ok and res or nil
 end
 
+local SHORT_SLEEVE_PATTERNS = {
+	"tshirt", "t_shirt", "t%-shirt", "shortsleeve", "short_sleeve", "short%-sleeve",
+	"short", "sleeveless", "tanktop", "tank_top", "tank%-top",
+	"topless", "shirtless", "naked", "polo"
+}
+
+local function NameLooksShortSleeve(name)
+	if not isstring(name) or name == "" then return false end
+	local low = string.lower(name)
+	for _, pat in ipairs(SHORT_SLEEVE_PATTERNS) do
+		if string.find(low, pat) then return true end
+	end
+	if low == "tee" or string.find(low, "_tee", 1, true) or string.find(low, "tee_", 1, true) then
+		return true
+	end
+	return false
+end
+
+-- Detects whether ent is wearing a short-sleeved or sleeveless upper body (T-shirt, tank top, etc.)
+-- where bare arms must remain visible beneath sleeves (never hidden with ZCGloves' "null").
+function AppCompat.IsShortSleeveEntity(ent)
+	if not IsValid(ent) then return false end
+
+	if istable(ZCGloves) then
+		if SafeBoolCall(ZCGloves.ShortSleevesByName, ent) then return true end
+		if SafeBoolCall(ZCGloves.ShortSleeves, ent) then return true end
+	end
+
+	if isfunction(ent.GetBodyGroups) and isfunction(ent.GetBodygroup) then
+		local ok, groups = pcall(ent.GetBodyGroups, ent)
+		if ok and istable(groups) then
+			for _, g in ipairs(groups) do
+				local gname = isstring(g.name) and string.lower(g.name) or ""
+				if gname ~= "hands" and istable(g.submodels) then
+					local cur = ent:GetBodygroup(g.id) or 0
+					local subName = g.submodels[cur]
+					if NameLooksShortSleeve(subName) then
+						return true
+					end
+				end
+			end
+		end
+	end
+
+	return false
+end
+
 -- Returns the real visible submaterial for slot (0..31) on src, unwrapping ZCGloves' hide material
 -- back to the saved pre-hide material (or "" for default).
 function AppCompat.GetCleanSubMaterial(src, slot)
@@ -178,13 +225,64 @@ local function CollectHandSlots(ent, state)
 		end
 	end
 
+	-- Extra safety net: if any skin/hand/arm material slot carries ZCGloves' hide material ("null"),
+	-- include it so an untracked or short-sleeve bare-arm slot can never stay invisible.
+	if isfunction(ent.GetMaterials) then
+		local ok, mats = pcall(ent.GetMaterials, ent)
+		if ok and istable(mats) then
+			for i = 1, math.min(#mats, 32) do
+				local slot = i - 1
+				if not slots[slot] then
+					local sub = ent:GetSubMaterial(slot) or ""
+					if AppCompat.IsHideMaterial(sub) then
+						local low = string.lower(mats[i] or "")
+						if string.find(low, "hand", 1, true)
+							or string.find(low, "arm", 1, true)
+							or string.find(low, "skin", 1, true)
+							or string.find(low, "glove", 1, true) then
+							slots[slot] = true
+						end
+					end
+				end
+			end
+		end
+	end
+
 	return slots
+end
+
+-- Restores any hidden hand slot that ZCGloves' mesh analysis reports as shared with the bare arm,
+-- preventing "null" from ever erasing bare forearms/upper arms under sleeves.
+function AppCompat.RestoreSharedHiddenSlots(ent)
+	if not IsValid(ent) or not AppCompat.IsActive() then return 0 end
+
+	local state = istable(ZCGloves.States) and ZCGloves.States[ent] or nil
+	local slots = CollectHandSlots(ent, state)
+	if next(slots) == nil then return 0 end
+
+	local restored = 0
+	for slot in pairs(slots) do
+		local cur = ent:GetSubMaterial(slot) or ""
+		if AppCompat.IsHideMaterial(cur) and SafeBoolCall(ZCGloves.SlotShared, ent, slot) then
+			if IsSlotTrackedByZCG(state, slot) then
+				if RestoreTrackedSlot(ent, state, slot) then
+					restored = restored + 1
+				end
+			else
+				ent:SetSubMaterial(slot, nil)
+				if istable(ent.zcg_hidden_slots) then ent.zcg_hidden_slots[slot] = nil end
+				restored = restored + 1
+			end
+		end
+	end
+
+	return restored
 end
 
 -- Clears orphaned ZCGloves hide materials on hand slots of ent.
 -- Never touches non-hand slots (so armor HideSubMaterails on jackets stay intact).
--- When forceInvalid is true (e.g. after jacket/bodygroup change or restoring ply after a slide),
--- also restores tracked slots if the current jacket/glove should not hide hand materials.
+-- When forceInvalid is true (e.g. after jacket/bodygroup change, on short sleeves, or restoring ply
+-- after a slide), also restores tracked slots if the current jacket/glove should not hide hands.
 function AppCompat.SanitizeOrphanHiddenSlots(ent, forceInvalid)
 	if not IsValid(ent) or not AppCompat.IsActive() then return 0 end
 
@@ -192,20 +290,20 @@ function AppCompat.SanitizeOrphanHiddenSlots(ent, forceInvalid)
 	local slots = CollectHandSlots(ent, state)
 	if next(slots) == nil then return 0 end
 
-	local shouldNotHideAny = false
-	if forceInvalid then
-		local variant = SafeCall(ZCGloves.GloveOf, ent)
-		if not variant
-			or SafeBoolCall(ZCGloves.StockGlove, ent)
-			or SafeBoolCall(ZCGloves.ShortSleevesByName, ent) then
-			shouldNotHideAny = true
-		end
-	elseif istable(state) then
-		if not state.variant or not state.drawn then
-			shouldNotHideAny = true
-		elseif SafeBoolCall(ZCGloves.ShortSleevesByName, ent)
-			or SafeBoolCall(ZCGloves.StockGlove, ent) then
-			shouldNotHideAny = true
+	local shortSleeves = AppCompat.IsShortSleeveEntity(ent)
+	local stockGlove = SafeBoolCall(ZCGloves.StockGlove, ent)
+
+	local shouldNotHideAny = shortSleeves or stockGlove
+	if not shouldNotHideAny then
+		if forceInvalid then
+			local variant = SafeCall(ZCGloves.GloveOf, ent)
+			if not variant then
+				shouldNotHideAny = true
+			end
+		elseif istable(state) then
+			if not state.variant or not state.drawn then
+				shouldNotHideAny = true
+			end
 		end
 	end
 
@@ -215,7 +313,7 @@ function AppCompat.SanitizeOrphanHiddenSlots(ent, forceInvalid)
 		if AppCompat.IsHideMaterial(cur) then
 			local tracked = IsSlotTrackedByZCG(state, slot)
 			local slotShared = false
-			if tracked and forceInvalid and not shouldNotHideAny then
+			if tracked and not shouldNotHideAny then
 				slotShared = SafeBoolCall(ZCGloves.SlotShared, ent, slot)
 			end
 
@@ -234,6 +332,23 @@ function AppCompat.SanitizeOrphanHiddenSlots(ent, forceInvalid)
 	end
 
 	return restored
+end
+
+-- Unified post-ZCG guard executed right before ent:DrawModel() on ply, ragdolls, and BodyAnimMDL.
+function AppCompat.PostZCGDrawGuard(ent)
+	if not IsValid(ent) or not AppCompat.IsActive() then return end
+
+	AppCompat.ProtectNonFingerArmBones(ent)
+
+	local state = istable(ZCGloves.States) and ZCGloves.States[ent] or nil
+	local shortSleeves = AppCompat.IsShortSleeveEntity(ent)
+	local stockGlove = SafeBoolCall(ZCGloves.StockGlove, ent)
+
+	if shortSleeves or stockGlove or not state or not state.drawn or not state.variant then
+		AppCompat.SanitizeOrphanHiddenSlots(ent, shortSleeves)
+	else
+		AppCompat.RestoreSharedHiddenSlots(ent)
+	end
 end
 
 local function IsHandOrFingerBone(ent, modelKey, bone)
@@ -417,11 +532,7 @@ function AppCompat.TryWrapZCGHook()
 		local ok, a, b, c = pcall(wrappedZCGOrig, ent, owner, ...)
 
 		if IsValid(ent) then
-			AppCompat.ProtectNonFingerArmBones(ent)
-			local state = istable(ZCGloves) and istable(ZCGloves.States) and ZCGloves.States[ent] or nil
-			if not state or not state.drawn or not state.variant then
-				AppCompat.SanitizeOrphanHiddenSlots(ent, false)
-			end
+			AppCompat.PostZCGDrawGuard(ent)
 		end
 
 		if ok then return a, b, c end
@@ -461,7 +572,7 @@ function AppCompat.RunZCGDrawHookOnly(ent, ply)
 		end
 		pcall(fn, ent, ply)
 		if fn ~= wrappedZCGFunc then
-			AppCompat.ProtectNonFingerArmBones(ent)
+			AppCompat.PostZCGDrawGuard(ent)
 		end
 	end
 end
@@ -480,15 +591,53 @@ function AppCompat.GetDebugSummary(ply)
 	if not AppCompat.IsActive() then return "inactive (ZCGloves not loaded)" end
 	local jacket = IsValid(ply) and SafeCall(ZCGloves.JacketOf, ply) or nil
 	local variant = IsValid(ply) and SafeCall(ZCGloves.GloveOf, ply) or nil
-	local short = IsValid(ply) and SafeBoolCall(ZCGloves.ShortSleevesByName, ply) or false
+	local short = IsValid(ply) and AppCompat.IsShortSleeveEntity(ply) or false
 	local stock = IsValid(ply) and SafeBoolCall(ZCGloves.StockGlove, ply) or false
+	local handsSlot = IsValid(ply) and SafeCall(ZCGloves.HandsSlot, ply) or nil
+	local shared = (IsValid(ply) and isnumber(handsSlot)) and SafeBoolCall(ZCGloves.SlotShared, ply, handsSlot) or false
 	return string.format(
-		"active | wrapped=%s | jacket=%s | glove=%s | shortSleeves=%s | stockGlove=%s",
+		"active | wrapped=%s | jacket=%s | glove=%s | shortSleeves=%s | stockGlove=%s | handsSlot=%s(shared=%s)",
 		tostring(BeatrunZCityZCGCompatWrapped == true),
 		tostring(jacket or "none"),
 		tostring(istable(variant) and variant.id or "none"),
 		tostring(short),
-		tostring(stock)
+		tostring(stock),
+		tostring(handsSlot or "nil"),
+		tostring(shared)
+	)
+end
+
+function AppCompat.GetDetailedAppearanceDebug(ply)
+	if not IsValid(ply) then return "no entity" end
+
+	local bgs = {}
+	if isfunction(ply.GetBodyGroups) and isfunction(ply.GetBodygroup) then
+		local ok, groups = pcall(ply.GetBodyGroups, ply)
+		if ok and istable(groups) then
+			for _, g in ipairs(groups) do
+				local val = ply:GetBodygroup(g.id) or 0
+				local sub = istable(g.submodels) and g.submodels[val] or tostring(val)
+				local low = string.lower(g.name or "")
+				if low == "torso" or low == "sheet" or low == "hands" or low == "body" or low == "arms" or low == "sleeves" then
+					bgs[#bgs + 1] = string.format("%s=%d(%s)", tostring(g.name), val, tostring(sub))
+				end
+			end
+		end
+	end
+
+	local subs = {}
+	for i = 0, 31 do
+		local s = ply:GetSubMaterial(i)
+		if isstring(s) and s ~= "" then
+			subs[#subs + 1] = string.format("[%d]=%s", i, s)
+		end
+	end
+
+	return string.format(
+		"mdl=%s | bg={%s} | sub={%s}",
+		tostring(ply:GetModel() or "none"),
+		#bgs > 0 and table.concat(bgs, ", ") or "none",
+		#subs > 0 and table.concat(subs, ", ") or "default"
 	)
 end
 

@@ -7,10 +7,27 @@ local cvCamTilt = GetConVar("Beatrun_SlideCamTilt")
 local cvHideBody = GetConVar("Beatrun_SlideHideBody")
 local cvTrickCam = GetConVar("Beatrun_TrickCam")
 local cvTrickCamOffset = GetConVar("Beatrun_TrickCamOffset")
--- A real non-melee weapon in hand RIGHT NOW. Bare hands and all melee SWEPs are excluded from
--- armed slide visuals and use the regular unarmed slide animation.
+local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
+
+local function IsRollBodyAnimActive(ply)
+	if IsValid(ply) and ply.GetSafetyRollTime and CurTime() < ply:GetSafetyRollTime() then
+		return true
+	end
+	if isstring(BodyAnimString) and BodyAnimString ~= "nil" then
+		if string.find(BodyAnimString, "roll", 1, true) or string.find(BodyAnimString, "land", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+-- A real non-melee weapon in hand RIGHT NOW. Bare hands, all melee SWEPs, and any weapon during
+-- a safety roll (when RollHolster is active) are excluded from armed trick visuals.
 local function BeatrunWeaponArmed(ply)
 	if not IsValid(ply) then return false end
+	if IsRollBodyAnimActive(ply) and (not cvRollHolster or cvRollHolster:GetBool()) then
+		return false
+	end
 	return BeatrunIsSlideWeapon(ply:GetActiveWeapon())
 end
 
@@ -249,11 +266,12 @@ local function BuildBodyAndArmModels(ply)
 			return IsValid(ply) and ply:GetPlayerColor() or vector_origin
 		end
 
-		-- Never share the player's model instance when ZCGloves / Big Appearance is active:
+		-- Never share the player's model instance when Z-City appearance or ZCGloves is active:
 		-- glove submaterial hiding, bone shrinking and ClearGlove on BodyAnimMDL would otherwise
-		-- leak back onto ply and leave the player's own hands invisible after the slide.
+		-- leak back onto ply and leave the player's own hands/arms broken after the trick.
+		local hasAppearance = zcgActive or (hg ~= nil and hg.Appearance ~= nil)
 		local cvSnatch = GetConVar("Beatrun_SnatchModel")
-		if (not zcgActive) and (not cvSnatch or cvSnatch:GetBool()) and isfunction(BodyAnimMDL.SnatchModelInstance) then
+		if (not hasAppearance) and cvSnatch and cvSnatch:GetBool() and isfunction(BodyAnimMDL.SnatchModelInstance) then
 			pcall(BodyAnimMDL.SnatchModelInstance, BodyAnimMDL, ply)
 		end
 
@@ -368,8 +386,19 @@ function BeatrunRestoreStaticPlayerModel(ply)
 	ply:SetNoDraw(ply._BRZHiddenNoDraw and true or false)
 	ply._BRZHiddenNoDraw = nil
 
-	if BeatrunZCityAppCompat and isfunction(BeatrunZCityAppCompat.SanitizeOrphanHiddenSlots) then
-		BeatrunZCityAppCompat.SanitizeOrphanHiddenSlots(ply, true)
+	-- Force Z-City's TPIK and Source's bone cache to rebuild cleanly for standing/walking render.
+	ply.nextrebuild = 0
+	if isfunction(ply.InvalidateBoneCache) then
+		pcall(ply.InvalidateBoneCache, ply)
+	end
+
+	if BeatrunZCityAppCompat then
+		if isfunction(BeatrunZCityAppCompat.SanitizeOrphanHiddenSlots) then
+			BeatrunZCityAppCompat.SanitizeOrphanHiddenSlots(ply, true)
+		end
+		if isfunction(BeatrunZCityAppCompat.RestoreSharedHiddenSlots) then
+			BeatrunZCityAppCompat.RestoreSharedHiddenSlots(ply)
+		end
 	end
 end
 
@@ -956,8 +985,12 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDra
 			appCompat.SanitizeOrphanHiddenSlots(BodyAnimMDL, false)
 		end
 		pcall(hook.Run, "CoolPostDrawAppearance", BodyAnimMDL, ply)
-		if appCompat and isfunction(appCompat.ProtectNonFingerArmBones) then
-			appCompat.ProtectNonFingerArmBones(BodyAnimMDL)
+		if appCompat then
+			if isfunction(appCompat.PostZCGDrawGuard) then
+				appCompat.PostZCGDrawGuard(BodyAnimMDL)
+			elseif isfunction(appCompat.ProtectNonFingerArmBones) then
+				appCompat.ProtectNonFingerArmBones(BodyAnimMDL)
+			end
 		end
 		BodyAnimMDL:DrawModel()
 		pcall(hook.Run, "PostDrawAppearance", BodyAnimMDL, ply)
@@ -972,8 +1005,12 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDra
 				appCompat.SanitizeOrphanHiddenSlots(BodyAnimMDL, false)
 			end
 			pcall(hook.Run, "CoolPostDrawAppearance", BodyAnimMDL, ply)
-			if appCompat and isfunction(appCompat.ProtectNonFingerArmBones) then
-				appCompat.ProtectNonFingerArmBones(BodyAnimMDL)
+			if appCompat then
+				if isfunction(appCompat.PostZCGDrawGuard) then
+					appCompat.PostZCGDrawGuard(BodyAnimMDL)
+				elseif isfunction(appCompat.ProtectNonFingerArmBones) then
+					appCompat.ProtectNonFingerArmBones(BodyAnimMDL)
+				end
 			end
 			BodyAnimMDL:DrawModel()
 			pcall(hook.Run, "PostDrawAppearance", BodyAnimMDL, ply)

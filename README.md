@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.5
+**Версия:** 2.21.6
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_2.21.5.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.5.zip>
+1. Скачать `beatrun_zcity_2.21.6.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.6.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.5`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.6`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -1146,6 +1146,8 @@ beatrun_zcity_debug
 | `Beatrun_TrickCamHeight` | `45` | Высота камеры над персонажем в режиме третьего лица |
 | `Beatrun_TrickCamDrawBody` | `0` | Рисовать тело в режиме от первого лица |
 | `Beatrun_ZCity_SlideAutoHold` | `1` | Слайд идёт сам до конца после одного нажатия комбинации |
+| `Beatrun_ZCity_SlideAirCheck` | `1` | Автоматически прекращать слайд, когда под игроком заканчивается поверхность / обрыв |
+| `Beatrun_ZCity_RollHolster` | `1` | Автоматически убирать любое оружие в пустые руки во время страховочного переката |
 | `Beatrun_ZCity_DebugHUD` | `1` | Панель диагностики камеры/трюка на экране |
 
 ---
