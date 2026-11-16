@@ -1,4 +1,4 @@
--- Beatrun ledge climb & hang for Z-City (2.21.7).
+-- Beatrun ledge climb & hang for Z-City (2.21.8).
 -- Ported from Beatrun's sh/climb.lua to this addon's scheme: no gamemode edits, no MOVETYPE_NOCLIP,
 -- no view/angle lock. The origin is driven inside SetupMove (predicted on the client and repeated on
 -- the server) and the animation goes through StartBodyAnim like the slide and the safety roll.
@@ -190,9 +190,6 @@ local function StartGrab(ply, mv, ledge, CT, fromGround)
 		BeatrunZCityHolsterForTrick(ply)
 	end
 
-	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f -> %s", ledge.height, ledge.dist, grabSpeed,
-		(ledge.height <= cvLowHeight:GetFloat()) and "vault (vaultonto)" or "hang (hangheaveup)")
-
 	-- Two different climbs by height (2.21.8), exactly like the rig's two animations:
 	--   low ledge (ClimbLowHeight and below) -> vault onto the wall        (vaultonto)
 	--   higher ledge                         -> hang, then pull up on W   (hangheaveup)
@@ -206,6 +203,10 @@ local function StartGrab(ply, mv, ledge, CT, fromGround)
 	else
 		lowLedge = not isvector(ledge.hangPos)
 	end
+
+	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f, %s -> %s", ledge.height, ledge.dist, grabSpeed,
+		fromGround and "from the ground" or "caught in the air",
+		lowLedge and "vault (vaultonto)" or "hang (hangheaveup)")
 
 	if lowLedge then
 		ply._BRZClimbLow = true
