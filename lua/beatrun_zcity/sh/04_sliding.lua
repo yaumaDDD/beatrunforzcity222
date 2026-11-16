@@ -260,10 +260,10 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 		ply:SetSliding(true)
 		ply:SetSlidingSlippery(false)
 
-		-- Shooting during the slide is only allowed if a real weapon was already in hand when the
-		-- slide started (sliding with bare hands must not let the player fire mid-slide).
+		-- Armed slide is only enabled if a valid non-melee weapon was already in hand when the
+		-- slide started (bare hands and melee SWEPs use the regular unarmed slide).
 		local wep = ply:GetActiveWeapon()
-		ply._BRZSlideArmed = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh" or false
+		ply._BRZSlideArmed = BeatrunIsSlideWeapon(wep)
 
 		ply._BRZSlideProtectUntil = CT + 0.2
 
@@ -439,7 +439,7 @@ BeatrunAddOrderedHook("StartCommand", "zz_BeatrunZCity_SlideCmd", function(ply, 
 		local limit = BeatrunGetSlideYawLimit()
 		if limit > 0 then
 			local wep = ply:GetActiveWeapon()
-			local armed = ply._BRZSlideArmed or (IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh")
+			local armed = ply._BRZSlideArmed or BeatrunIsSlideWeapon(wep)
 			if armed then
 				local slideAng = ply:GetSlidingAngle()
 				if isangle(slideAng) then

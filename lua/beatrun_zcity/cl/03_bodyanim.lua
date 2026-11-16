@@ -7,13 +7,11 @@ local cvCamTilt = GetConVar("Beatrun_SlideCamTilt")
 local cvHideBody = GetConVar("Beatrun_SlideHideBody")
 local cvTrickCam = GetConVar("Beatrun_TrickCam")
 local cvTrickCamOffset = GetConVar("Beatrun_TrickCamOffset")
--- A real weapon in hand RIGHT NOW. The slide-start flag is a gameplay gate (may I shoot?), and it used to
--- drive the visuals too: when it was not set the render path fell back to the merged hands model - the
--- bare arm stub with no gun in it. Visuals must follow the weapon that is actually held.
+-- A real non-melee weapon in hand RIGHT NOW. Bare hands and all melee SWEPs are excluded from
+-- armed slide visuals and use the regular unarmed slide animation.
 local function BeatrunWeaponArmed(ply)
 	if not IsValid(ply) then return false end
-	local wpn = ply:GetActiveWeapon()
-	return (IsValid(wpn) and wpn:GetClass() ~= "weapon_hands_sh") and true or false
+	return BeatrunIsSlideWeapon(ply:GetActiveWeapon())
 end
 
 local cvTrickCamUp = GetConVar("Beatrun_TrickCamUp")
@@ -863,10 +861,10 @@ local function DrawSlideZCityWeapon(ply, bodyEnt)
 		return true, wpn, handPos, handAng
 	end
 
-	-- Z-City melee & TPIK items (weapon_melee, weapon_tpik_base, medicine, etc.)
+	-- Z-City non-melee TPIK items (weapon_tpik_base, medicine, etc.; melee SWEPs are filtered out above)
 	if isfunction(wpn.DrawWorldModel2) then
 		local ok = pcall(wpn.DrawWorldModel2, wpn)
-		BeatrunZCitySlideWeaponState = ok and "melee/tpik ok (1H right)" or "DrawWorldModel2 err"
+		BeatrunZCitySlideWeaponState = ok and "tpik item ok (1H right)" or "DrawWorldModel2 err"
 		return ok, wpn, nil, nil
 	end
 

@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.3
+**Версия:** 2.21.4
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_2.21.3.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.3.zip>
+1. Скачать `beatrun_zcity_2.21.4.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.4.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.3`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.4`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -92,6 +92,12 @@ if IsValid(ply.FakeRagdoll) or BeatrunIsThirdPerson(ply) then return end
 играет слайд или страховочный перекат**, в том числе в третьем лице. Когда трюк заканчивается,
 камера плавно (лерп) возвращается на обычную камеру Z-City — то есть переключение происходит
 ровно на момент выполнения трюка, а не постоянно.
+
+### 2.21.4 — исключены все melee SWEP-ы из подката с оружием
+
+Все оружие ближнего боя (melee SWEP-ы) теперь исключено из вооружённого режима подката и обрабатывается так же, как безоружный подкат с кулаками:
+- Добавлена общая проверка `BeatrunIsMeleeWeapon` / `BeatrunIsSlideWeapon` (`lua/beatrun_zcity/sh/02_helpers.lua`), отсекающая все Z-City melee свепы (`weapon_melee` и все наследники с `ismelee`/`ismelee2`/`Base = "weapon_melee"`/`Category = "Weapons - Melee"` — ножи, топоры, биты, ломы, кувалды, копья, щит и т.д.), `weapon_hands_sh`, `weapon_hg_coolhands`, ванильные HL2 melee (`weapon_crowbar`, `weapon_stunstick`, `weapon_fists`) и сторонние melee-паки (`tfa_melee_base`, `arccw_base_melee`, `arc9_base_melee`, `cw_melee_base`, `mg_melee_base`, `HoldType` `melee`/`melee2`/`knife`/`fist`), не затрагивая огнестрел (`homigrad_base` и др.).
+- При подкате с melee SWEP не включается вооружённый режим (`_BRZSlideArmed = false`), не рисуется melee-свеп поверх подката и не запускается TPIK правой руки — проигрывается чистая анимация обычного подката.
 
 ### 2.21.3 — ограничение поворота с оружием в слайде (±90° влево и вправо)
 

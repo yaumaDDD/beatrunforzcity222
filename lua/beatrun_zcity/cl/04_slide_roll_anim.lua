@@ -81,7 +81,7 @@ function BeatrunSlideAnimStart()
 	-- Sync the slide-start armed flag here as well so multiplayer net-triggered slides always know
 	-- whether the slide started armed even if client SetupMove prediction skipped the start tick.
 	local activeWep = ply:GetActiveWeapon()
-	ply._BRZSlideArmed = (IsValid(activeWep) and activeWep:GetClass() ~= "weapon_hands_sh") and true or false
+	ply._BRZSlideArmed = BeatrunIsSlideWeapon(activeWep)
 
 	local slippery = ply:GetSlidingSlippery()
 	local slideAng = ply:GetSlidingAngle()
