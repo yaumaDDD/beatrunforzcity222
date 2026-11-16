@@ -181,6 +181,8 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 		ply._BRZRollSlowFactor = nil
 		ply._BRZRollSeconds = nil
 		ply._BRZRollVariant = nil
+		ply._BRZRollDistance = nil
+		ply._BRZRollMoved = nil
 		if ply.GetRollLand and ply:GetRollLand() then ply:SetRollLand(false) end
 	end
 
@@ -228,40 +230,54 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 			-- landing and the roll stayed in place. Moving the origin inside SetupMove is exactly what
 			-- the ledge climb already does and it works there, so the roll does the same, with a hull
 			-- trace in front of it so a wall stops the roll instead of being rolled through.
-			if dir:LengthSqr() > 0.001 then
-				local dt = 0.015
-				if engine and isfunction(engine.TickInterval) then
-					dt = math.Clamp(engine.TickInterval(), 0.001, 0.1)
-				end
+			local dt = 0.015
+			if engine and isfunction(engine.TickInterval) then
+				dt = math.Clamp(engine.TickInterval(), 0.001, 0.1)
+			end
 
-				local step = dir * (rollSpeed * dt)
+			-- 2.21.28: how far the roll goes is a fixed budget for the whole animation, spent tick by tick
+			-- while the pose plays (ply._BRZRollDistance is set once, when the trick is accepted). Before
+			-- this the roll pushed the body at a constant 220-380 u/s for up to 1.7 s - 300 to 600 units -
+			-- and then left that momentum inside Z-City's inertia, which is why the character kept flying
+			-- forward after the animation had already ended.
+			local budget = ply._BRZRollDistance
+			local moved = ply._BRZRollMoved or 0
+			local stepLen = rollSpeed * dt
+			if budget then
+				local remaining = math.max(0, budget - moved)
+				if remaining < stepLen then stepLen = remaining end
+			end
+			local rollEndsThisTick = (CT + dt) >= (ply:GetSafetyRollTime() or 0)
+
+			if dir:LengthSqr() > 0.001 and stepLen > 0.0001 then
+				local step = dir * stepLen
 				local origin = mv:GetOrigin()
 
+				local mins, maxs
+				if isfunction(ply.OBBMins) and isfunction(ply.OBBMaxs) then
+					mins, maxs = ply:OBBMins(), ply:OBBMaxs()
+				else
+					mins, maxs = ply:GetHull()
+				end
+
+				-- traced 2 units above the feet so the sweep never starts inside the floor
+				rollTrace.start = origin + Vector(0, 0, 2)
+				rollTrace.endpos = rollTrace.start + step
+				rollTrace.mins = mins
+				rollTrace.maxs = maxs
+				rollTrace.filter = ply
+				rollTrace.mask = MASK_PLAYERSOLID
+				rollTrace.collisiongroup = COLLISION_GROUP_PLAYER_MOVEMENT
+
+				local tr = util.TraceHull(rollTrace)
+				if tr.Hit then
+					step = step * math.Clamp(tr.Fraction or 0, 0, 1)
+				end
+
+				ply._BRZRollMoved = moved + step:Length()
+
 				if step:LengthSqr() > 0.000001 then
-					local mins, maxs
-					if isfunction(ply.OBBMins) and isfunction(ply.OBBMaxs) then
-						mins, maxs = ply:OBBMins(), ply:OBBMaxs()
-					else
-						mins, maxs = ply:GetHull()
-					end
-
-					-- traced 2 units above the feet so the sweep never starts inside the floor
-					rollTrace.start = origin + Vector(0, 0, 2)
-					rollTrace.endpos = rollTrace.start + step
-					rollTrace.mins = mins
-					rollTrace.maxs = maxs
-					rollTrace.filter = ply
-					rollTrace.mask = MASK_PLAYERSOLID
-					rollTrace.collisiongroup = COLLISION_GROUP_PLAYER_MOVEMENT
-
-					local tr = util.TraceHull(rollTrace)
-					if tr.Hit then
-						step = step * math.Clamp(tr.Fraction or 0, 0, 1)
-					end
-
-					if step:LengthSqr() > 0.000001 then
-						mv:SetOrigin(origin + step)
-					end
+					mv:SetOrigin(origin + step)
 				end
 			end
 
@@ -274,10 +290,14 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 			mv:SetMaxClientSpeed(math.max(100, rollSpeed))
 			ply:SetMaxSpeed(math.max(100, rollSpeed))
 
-			-- Z-City keeps its own momentum vector: pointed along the roll it also carries the body on
-			-- for a moment after the roll ends instead of stopping dead.
-			ply.MovementInertia = dir * rollSpeed
-			ply.CurrentSpeed = rollSpeed
+			-- 2.21.28: Z-City keeps its own momentum vector and would carry the body on with the full roll
+			-- speed after the pose ended - the long "throw". On the last tick of the animation the momentum
+			-- is dropped to a short step-out instead, so everything the player gains from a roll happens
+			-- while the roll is visible.
+			local budgetSpent = stepLen < 0.0001
+			local carry = (rollEndsThisTick or budgetSpent) and 60 or rollSpeed
+			ply.MovementInertia = dir * carry
+			ply.CurrentSpeed = carry
 		else
 			-- knee landing: you drop onto the knee and stop dead, exactly like Beatrun's "land"
 			mv:SetSideSpeed(0)
@@ -342,7 +362,7 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.27"
+local ADDON_VERSION = "2.21.28"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
@@ -492,14 +512,6 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- same fall always has to give the same landing, that was the whole point of 2.21.14.
 	ply._BRZRollVariant = variant
 
-	-- 2.21.21: ONE line per landing, always printed (not behind the debug convar). It names the pose and
-	-- the movement, so the console alone tells which branch ran - no more guessing from a screenshot.
-	ReportLanding(ply, string.format("%s (fall %.0f, impact %.0f)",
-		variant == 1 and "KNEE landing - land, stays in place"
-			or (variant == 2 and "ROLL - meroll, carries forward")
-			or "no trick",
-		fallHeight, speed))
-
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
 		local names = { [0] = "nothing", [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
 		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %d, knees %d..%d, roll %d..%d, nothing > %d]",
@@ -507,10 +519,31 @@ local function TrySafetyRoll(ply, water, floater, speed)
 			KNEE_MAX + 1, MAX_HEIGHT, MAX_HEIGHT))
 	end
 
-	-- How long the trick owns the player: a drop from a roof rolls noticeably longer than a fence hop.
-	local rollSeconds = math.Clamp(0.85 + fallHeight / 520, 0.85, 1.7)
-	if useRoll then rollSeconds = math.min(rollSeconds, 1.9) end
+	-- How long the trick owns the player. 2.21.28: the roll is no longer stretched to 1.7 s - the pose is
+	-- played at (almost) its own speed and the ground it covers is spread over this window, so a big fall
+	-- does not turn into a slow-motion roll that crawls forward.
+	local rollSeconds = math.Clamp(0.62 + fallHeight / 1100, 0.75, 1.05)
 	ply._BRZRollSeconds = rollSeconds
+
+	-- 2.21.28: the whole forward travel of a roll, in units, decided once. Beatrun's roll is a recovery,
+	-- not a launch: about one and a half body lengths, a bit more from a bigger drop. The movement code
+	-- spends exactly this much during the animation and nothing afterwards.
+	ply._BRZRollDistance = math.Clamp(110 + fallHeight * 0.12, 130, 200)
+	ply._BRZRollMoved = 0
+
+	-- 2.21.21: ONE line per landing, always printed (not behind the debug convar). It names the pose and
+	-- the movement, so the console alone tells which branch ran - no more guessing from a screenshot.
+	-- 2.21.28: a roll line also carries the ground it will cover, so the log shows the travel directly.
+	local landingText
+	if variant == 2 then
+		landingText = string.format("ROLL - meroll, carries forward (fall %.0f, impact %.0f, %.0fu in %.2fs)",
+			fallHeight, speed, ply._BRZRollDistance, rollSeconds)
+	elseif variant == 1 then
+		landingText = string.format("KNEE landing - land, stays in place (fall %.0f, impact %.0f)", fallHeight, speed)
+	else
+		landingText = string.format("no trick (fall %.0f, impact %.0f)", fallHeight, speed)
+	end
+	ReportLanding(ply, landingText)
 
 	ply:SetSafetyRollAng(ang)
 	if isfunction(ply.SetRollLand) then ply:SetRollLand(not useRoll) end
