@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.21
+**Версия:** 2.21.22
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_2.21.21.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/b80477fd-beatrunforzcity222/beatrun_zcity_2.21.21.zip>
+1. Скачать `beatrun_zcity_2.21.22.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/b80477fd-beatrunforzcity222/beatrun_zcity_2.21.22.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.21`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.22`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -40,7 +40,7 @@
 
 ---
 
-## Что нового в 2.21.21
+## Что нового в 2.21.22
 
 ### Нашёл настоящую причину, почему перекат/колени «не менялись» от версии к версии
 
@@ -60,6 +60,9 @@ true)` — **свой fake-рэгдолл**. Падение со ~322 юнито
 
 * гард стоит на самой функции `hg.LightStunPlayer`: пока трюк владеет приземлением (идёт перекат/колени,
   или падение уже «взведено» и его высота в рабочем окне), fake-рэгдолл Z-City не запускается;
+* и вторая, более глубокая ступень — гард на `hg.Fake`, то есть на самой функции, которая создаёт
+  fake-рэгдолл. Пока трюк владеет приземлением, рэгдолл не создаётся вообще, кто бы его ни попросил
+  (`fallStun`, столкновение, организм, другой аддон);
 * гард на `fallStun` (обёртка хука) сам себя переустанавливает раз в секунду — если гейммод или другой
   аддон зарегистрирует свой `fallStun` поверх нашего, мы это заметим и вернём обёртку;
 * «взведено» больше не считается «обработано»: враппер всегда спрашивает наш `TrySafetyRoll` и
@@ -70,10 +73,10 @@ true)` — **свой fake-рэгдолл**. Падение со ~322 юнито
 Одна строка на приземление, без всяких дебаг-конваров:
 
 ```
-[Beatrun Z-City 2.21.21] landing numbers: knees 290..350, roll 350..750, above 750 no trick, min impact 250
-[Beatrun Z-City 2.21.21] landing: KNEE landing - land, stays in place (fall 322, impact 620)
-[Beatrun Z-City 2.21.21] landing: ROLL - meroll, carries forward (fall 480, impact 780)
-[Beatrun Z-City 2.21.21] landing: fall 322, impact 620 - NO trick: Ctrl was not tapped in the air (or the tap was too early); Z-City lands you
+[Beatrun Z-City 2.21.22] landing numbers: knees 290..350, roll 350..750, above 750 no trick, min impact 250
+[Beatrun Z-City 2.21.22] landing: KNEE landing - land, stays in place (fall 322, impact 620)
+[Beatrun Z-City 2.21.22] landing: ROLL - meroll, carries forward (fall 480, impact 780)
+[Beatrun Z-City 2.21.22] landing: fall 322, impact 620 - NO trick: Ctrl was not tapped in the air (or the tap was too early); Z-City lands you
 ```
 
 Первая строка печатается при старте и показывает числа, с которыми реально работает эта копия — если в

@@ -324,7 +324,7 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.21"
+local ADDON_VERSION = "2.21.22"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
@@ -642,12 +642,37 @@ local function LightStunWrapper(ply, time)
 	if LightStunOriginal then return LightStunOriginal(ply, time) end
 end
 
+-- 2.21.22: one layer deeper. Every stun path in Z-City ends in hg.Fake, and hg.Fake is what actually
+-- creates the fake ragdoll that tumbles the body. While our trick owns the landing the ragdoll must not
+-- exist at all - whoever asks for it (fallStun, a collide, the organism, another addon).
+local FakeOriginal
+
+local function FakeWrapper(ply, ...)
+	if TrickOwnsLanding(ply) then
+		if cvRollDebugLog and cvRollDebugLog:GetBool() then
+			print("[Beatrun Z-City] Z-City fake ragdoll (hg.Fake) blocked - the trick owns this landing")
+		end
+		return
+	end
+	if FakeOriginal then return FakeOriginal(ply, ...) end
+end
+
 local function InstallLightStunGuard()
-	if not hg or not isfunction(hg.LightStunPlayer) then return false end
-	if hg.LightStunPlayer == LightStunWrapper then return false end
-	LightStunOriginal = hg.LightStunPlayer
-	hg.LightStunPlayer = LightStunWrapper
-	return true
+	local changed = false
+
+	if hg and isfunction(hg.LightStunPlayer) and hg.LightStunPlayer ~= LightStunWrapper then
+		LightStunOriginal = hg.LightStunPlayer
+		hg.LightStunPlayer = LightStunWrapper
+		changed = true
+	end
+
+	if hg and isfunction(hg.Fake) and hg.Fake ~= FakeWrapper then
+		FakeOriginal = hg.Fake
+		hg.Fake = FakeWrapper
+		changed = true
+	end
+
+	return changed
 end
 
 -- Both guards are re-checked once a second: whichever addon/gamemode registers last, the trick keeps
