@@ -19,8 +19,8 @@ CreateConVar("Beatrun_ZCity_RollHolster", "1", REP, "Holster any equipped weapon
 CreateClientConVar("Beatrun_ZCity_SlideWeapon", "1", true, false, "Armed slide: 0 = clean first person (animated body hidden), 1 = animated body legs plus your own viewmodel with the weapon", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideNoDamage", "1", REP, "A slide protects from Z-City impact damage and injuries", 0, 1)
 CreateConVar("Beatrun_ZCity_RollMinSpeed", "250", REP, "Minimum fall speed at which a timed roll activates", 0, 2000)
-CreateConVar("Beatrun_ZCity_RollMinHeight", "290", REP, "(unused since 2.21.23) the landing table is fixed in code: knee landing 290..350", 0, 2000)
-CreateConVar("Beatrun_ZCity_RollBigHeight", "350", REP, "(unused since 2.21.23) the landing table is fixed in code: the roll plays above 350", 100, 2000)
+CreateConVar("Beatrun_ZCity_RollMinHeight", "290", REP, "(unused since 2.21.23) the landing table is fixed in code: knee landing 290..350, nothing 351..449", 0, 2000)
+CreateConVar("Beatrun_ZCity_RollBigHeight", "350", REP, "(unused since 2.21.23) the landing table is fixed in code: the roll plays from 450 to 750", 100, 2000)
 CreateConVar("Beatrun_ZCity_RollMaxHeight", "750", REP, "(unused since 2.21.23) the landing table is fixed in code: above 750 no trick at all", 100, 2000)
 
 -- Ledge climb & hang (Beatrun climb.lua, ported to this addon's scheme)

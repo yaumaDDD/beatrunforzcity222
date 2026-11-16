@@ -229,7 +229,8 @@ function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 
 	-- Height decides the pose and only the pose (fixed table, 2.21.23):
 	--   290 .. 350 -> "land" / "landgun"      (knee landing, like Beatrun)
-	--   351 .. 750 -> "meroll" / "merollgun"  (the one safety roll)
+	--   351 .. 449 -> nothing of ours, Z-City lands it
+	--   450 .. 750 -> "meroll" / "merollgun"  (the one safety roll)
 	--   above 750  -> no trick at all, Z-City takes the landing
 	-- "merollcrouch" is kept only for the old bool call style.
 	local animName
