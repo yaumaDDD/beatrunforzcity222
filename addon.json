@@ -1,0 +1,14 @@
+{
+  "title": "Beatrun Slide & Safety Roll for Z-City",
+  "type": "effects",
+  "tags": [
+    "fun",
+    "realism"
+  ],
+  "ignore": [
+    "*.7z",
+    "*.zip",
+    "README.md",
+    ".git/*"
+  ]
+}
