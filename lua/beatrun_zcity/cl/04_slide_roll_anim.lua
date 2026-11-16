@@ -2,8 +2,6 @@
 -- Starts BodyAnim ONLY when a slide or roll begins and removes it cleanly when finished.
 
 local cvAnimSet = GetConVar("Beatrun_AnimSet")
-local cvRollAlways = GetConVar("Beatrun_RollAlways")
-local cvRollAnim = GetConVar("Beatrun_RollAnim")
 local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 local cvCamLock = GetConVar("Beatrun_TrickCamLockAng")
 
@@ -200,7 +198,9 @@ end
 -- variant: 1 = knee landing ("land"), 2 = roll ("meroll"), 3 = low roll ("merollcrouch").
 -- The number is decided on the server (BeatrunRollVariantForHeight) and sent over the network, so the
 -- animation always matches the movement - it cannot flip between "land" and "meroll" on the same fall.
-function BeatrunRollAnimStart(variant, lowRollFlag)
+-- forced = the pose came from the server (Beatrun_ZC_RollStart / RollAnimSP), so it is the truth and it
+-- may replace a pose the client guessed a moment ago.
+function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
 
@@ -262,7 +262,9 @@ function BeatrunRollAnimStart(variant, lowRollFlag)
 	-- The same trick can be requested twice: client prediction plus the server trigger, or two variants
 	-- that only differ by a frame. Restarting inside half a second replays the animation from the top,
 	-- and a real roll always lasts longer than that - so a second start is ignored.
-	if IsValid(BodyAnim) and (BodyAnimString == animName or (now - lastRollAnimAt) < 0.5) then
+	-- 2.21.19: the same guard, but a pose that the server sent as the answer for this fall always wins -
+	-- otherwise a client-side guess ("meroll") could keep the roll on a fall that is a knee landing.
+	if IsValid(BodyAnim) and (BodyAnimString == animName or ((now - lastRollAnimAt) < 0.5 and not forced)) then
 		lastRollToken = ply:GetSafetyRollTime()
 		return
 	end
@@ -344,7 +346,9 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 
 	if rolling and not sliding and rollEndTime > lastRollToken and not IsValid(BodyAnim) then
 		local ang = ply:GetSafetyRollAng()
-		local variant = ply._BRZRollVariant or 2
+		-- 2.21.19: never guess "roll" when we have no number for this fall - the gentle knee landing is
+		-- the safe answer, and the server message corrects it upwards if the fall really was a big one.
+		local variant = ply._BRZRollVariant or 1
 		BeatrunRollAnimStart(variant)
 	end
 end)
@@ -364,7 +368,7 @@ end)
 
 net.Receive("Beatrun_ZC_RollStart", function()
 	local variant = net.ReadInt(8)
-	BeatrunRollAnimStart(variant)
+	BeatrunRollAnimStart(variant, nil, true)
 end)
 
 if game.SinglePlayer() then
@@ -381,6 +385,6 @@ if game.SinglePlayer() then
 
 	net.Receive("RollAnimSP", function()
 		local variant = net.ReadInt(8)
-		BeatrunRollAnimStart(variant)
+		BeatrunRollAnimStart(variant, nil, true)
 	end)
 end

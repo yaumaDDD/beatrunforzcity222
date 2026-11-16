@@ -30,17 +30,6 @@ local function ClimbClampLimits()
 	BodyLimitY = 170
 end
 
--- 2.21.18: the player's origin hangs 0.533 units INSIDE the wall (Beatrun's own ClimbingCheck number),
--- so the rig and the trick camera riding its head bone ended up inside the wall brush. The rendered rig
--- is pushed back out by this much - the body still hugs the wall, the camera no longer clips into the map.
-local HANG_WALL_GAP = 8
-
-local function HangOffset(ang)
-	if not ang then return nil end
-	local fwd = ang:Forward()
-	return fwd * -HANG_WALL_GAP
-end
-
 -- Jumped onto a ledge: play the grab animation, then fall into the hang pose
 function BeatrunZCityClimbAnimGrab(ang, hard)
 	local ply = LocalPlayer()
@@ -67,26 +56,25 @@ function BeatrunZCityClimbAnimGrab(ang, hard)
 		lockang = false,
 		allowmove = true,
 		BodyAnimSpeed = hard and 1.25 or 1.1,
-		BodyLimitX = 80,
-		BodyLimitY = 170,
-		posoffset = HangOffset(ang),
+		BodyLimitX = 70,
+		BodyLimitY = 110,
 		StartAngle = ang or ply:EyeAngles()
 	})
 end
 
--- Pulling up over the edge. Two sequences, exactly the split Beatrun makes:
---   low ledge  -> "vaultonto"   (Beatrun's small-obstacle vault, a single animation for the whole climb)
---   real ledge -> "hangheaveup" (the pull-up after the hang, Beatrun's "climbheave")
+-- Pulling up over the edge. Beatrun has a single pull-up sequence (its "climbheave" event maps to
+-- hangheaveup); low = short ledge with no air under it, which only makes the heave shorter.
 function BeatrunZCityClimbAnimHeave(ang, low)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
 
+	-- Beatrun's climb has exactly one pull-up sequence for both cases (its "climbheave" event maps to
+	-- hangheaveup); a low ledge only makes it shorter.
 	local dur = low and 0.5 or math.max(0.2, cvHeaveTime and cvHeaveTime:GetFloat() or 0.85)
-	local seqName = low and "vaultonto" or "hangheaveup"
+	local seqName = "hangheaveup"
 
-	-- Client prediction and the server trigger can both ask for the pull-up - never restart it, and
-	-- never cut a vaultonto that is already playing (it is the whole low-ledge climb).
-	if IsValid(BodyAnim) and BodyAnimString == seqName and BodyAnimCycle < 0.5 then
+	-- Client prediction and the server trigger can both ask for the pull-up - never restart it
+	if climbAnimState == 2 and IsValid(BodyAnim) and BodyAnimString == seqName and BodyAnimCycle < 0.5 then
 		return
 	end
 
@@ -107,10 +95,8 @@ function BeatrunZCityClimbAnimHeave(ang, low)
 		lockang = false,
 		allowmove = true,
 		BodyAnimSpeed = 1,
-		BodyLimitX = 80,
-		BodyLimitY = 170,
-		-- the vault starts from the player's own position (open air), the pull-up starts off a hang
-		posoffset = low and nil or HangOffset(ang),
+		BodyLimitX = 70,
+		BodyLimitY = 110,
 		StartAngle = ang or ply:EyeAngles()
 	})
 
@@ -125,8 +111,7 @@ end
 
 function BeatrunZCityClimbAnimEnd(landed)
 	climbAnimState = 0
-	if IsValid(BodyAnim) and (IsHangSequence(BodyAnimString) or BodyAnimString == "hangheaveup"
-		or BodyAnimString == "vaultonto") then
+	if IsValid(BodyAnim) and (IsHangSequence(BodyAnimString) or BodyAnimString == "hangheaveup") then
 		RemoveBodyAnim(landed and true or false)
 	end
 end

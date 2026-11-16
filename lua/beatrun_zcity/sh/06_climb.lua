@@ -6,7 +6,7 @@
 -- Flow (2.21.16, one climb like Beatrun - you just jump into the wall):
 --   * jump at a wall                                -> hands hit the ledge (hanghardstart / ...2)
 --   * you hang for a moment                          -> the pull-up starts by itself (hangheaveup)
---   * low ledge (ClimbLowHeight, or a floor right under it) -> vault onto it (vaultonto)
+--   * low ledge (no air under it)                    -> same two animations, body hangs where it is
 --   * while hanging: Ctrl / S drops you, Jump pushes you off the wall (the safety roll gets armed)
 
 local cvEnabled = GetConVar("Beatrun_ZCity_ClimbEnabled")
@@ -131,10 +131,8 @@ local function ProbeLedge(ply, origin, hit, eyeang, reach, mins, maxs)
 	groundTable.filter = ply
 	groundTable.mask = MASK_PLAYERSOLID
 	local ground = util.TraceLine(groundTable)
-	local groundHang = false
-	if ground.Hit and ground.HitPos.z > hangZ then
-		hangZ = ground.HitPos.z
-		groundHang = true
+	if ground.Hit then
+		hangZ = math.max(hangZ, ground.HitPos.z)
 	end
 
 	local hangPos = Vector(hit.HitPos.x, hit.HitPos.y, hangZ) + wallang:Forward() * 0.533
@@ -145,8 +143,7 @@ local function ProbeLedge(ply, origin, hit, eyeang, reach, mins, maxs)
 		standPos = standPos,
 		topZ = topZ,
 		height = height,
-		dist = dist,
-		groundHang = groundHang
+		dist = dist
 	}
 end
 
@@ -201,37 +198,10 @@ local function StartGrab(ply, mv, ledge, CT)
 		BeatrunZCityHolsterForTrick(ply)
 	end
 
-	-- 2.21.18, the split Beatrun itself makes: a low ledge (up to ClimbLowHeight, or a ledge standing on
-	-- the floor with no air under it) is VAULTED onto - "vaultonto", the animation Beatrun plays for a
-	-- small obstacle. A higher wall is hung on - hanghardstart(2) -> hangheaveup. Both live in our rig.
-	local lowLedge = ledge.height <= cvLowHeight:GetFloat() or ledge.groundHang
-
-	if lowLedge then
-		ply._BRZClimbLow = true
-		ply._BRZClimbHangPos = Vector(origin)
-
-		Log("ledge grab: height %.0f, wall %.0f away, impact %.0f, low ledge -> vault (vaultonto)",
-			ledge.height, ledge.dist, grabSpeed)
-
-		if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimHeave) then
-			BeatrunZCityClimbAnimHeave(ledge.wallang, true)
-		end
-
-		if SERVER then
-			ply:EmitSound("Cloth.MovementRun")
-			ply:EmitSound("Land.Concrete")
-			ply:EmitSound("WallrunRelease.Concrete")
-			if not game.SinglePlayer() then
-				net.Start("Beatrun_ZC_ClimbHeave")
-					net.WriteAngle(ledge.wallang)
-					net.WriteBool(true)
-				net.Send(ply)
-			end
-		end
-
-		StartHeave(ply, mv, CT, true)
-		return
-	end
+	-- Beatrun has ONE climb, not two paths: the hands hit the ledge (hanghardstart / hanghardstart2),
+	-- you hang for a moment and the pull-up follows (hangheaveup). A ledge low enough that there is no
+	-- air below it keeps the same two animations - the body hangs where it is, pressed to the wall.
+	local lowLedge = ledge.height <= cvLowHeight:GetFloat()
 
 	if not isvector(ledge.hangPos) then return end
 

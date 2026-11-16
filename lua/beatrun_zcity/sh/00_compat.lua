@@ -36,8 +36,8 @@ CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether
 CreateConVar("Beatrun_ZCity_SlideSteer", "0", REP, "Allow changing the slide course with strafe keys (0 = course is fixed)", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideShoot", "1", REP, "Allow free aiming and shooting during a slide", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideYawLimit", "90", REP, "Maximum left/right look and aim angle (degrees) relative to slide direction while sliding with a weapon (0 = unlimited)", 0, 180)
-CreateConVar("Beatrun_RollAnim", "0", REP, "Safety roll animation: 0 = chosen by fall height (big fall = roll, lower = knee landing), 1 = always the roll, 2 = always the knee landing", 0, 2)
-CreateConVar("Beatrun_RollAlways", "1", REP, "Always play the roll animation when the safety roll triggers (0 = plain landing animation when the player is standing still)", 0, 1)
+CreateConVar("Beatrun_RollAnim", "0", REP, "(unused since 2.21.19) the pose is decided by the fall height alone: no trick, knee landing, roll", 0, 2)
+CreateConVar("Beatrun_RollAlways", "1", REP, "(unused since 2.21.19) kept so old configs keep loading - the fall height decides everything", 0, 1)
 
 if CLIENT then
 	CreateClientConVar("Beatrun_AnimSet", "0", true, false, "Beatrun animation rig (0 = new_climbanim, 1 = old_climbanim)", 0, 1)

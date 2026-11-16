@@ -60,7 +60,9 @@ local function Report()
 	print("cycle / speed:      " .. string.format("%.2f / %.2f", tonumber(BodyAnimCycle) or -1, tonumber(BodyAnimSpeed) or -1))
 	print("cv HideBody:        " .. tostring(cvHideBody and cvHideBody:GetBool()))
 	print("cv AnimSet:         " .. tostring(Safe(function() return GetConVar("Beatrun_AnimSet"):GetInt() end)))
-	print("cv RollAlways:      " .. tostring(Safe(function() return GetConVar("Beatrun_RollAlways"):GetBool() end)))
+	print("roll heights:       " .. tostring(Safe(function() return string.format("knee %.0f..%.0f, roll %.0f..%.0f",
+		GetConVar("Beatrun_RollMinHeight"):GetFloat(), GetConVar("Beatrun_RollBigHeight"):GetFloat(),
+		GetConVar("Beatrun_RollBigHeight"):GetFloat(), GetConVar("Beatrun_RollMaxHeight"):GetFloat()) end)))
 	print("cv TrickCam:        " .. tostring(Safe(function() return GetConVar("Beatrun_TrickCam"):GetBool() end)))
 	print("cv TrickCamOffset:  " .. tostring(Safe(function() return GetConVar("Beatrun_TrickCamOffset"):GetFloat() end)))
 	print("static model hidden:" .. tostring(ply._BRZHiddenOverride ~= nil))

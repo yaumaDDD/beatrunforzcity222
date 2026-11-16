@@ -3,8 +3,6 @@
 
 local cvRollEnabled = GetConVar("Beatrun_ZCity_RollEnabled")
 local cvRollSpeedLoss = GetConVar("Beatrun_RollSpeedLoss")
-local cvRollAlways = GetConVar("Beatrun_RollAlways")
-local cvRollAnim = GetConVar("Beatrun_RollAnim")
 local cvRollNoDamage = GetConVar("Beatrun_RollNoDamage")
 local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 local cvRollFallReduction = GetConVar("Beatrun_ZCity_RollFallReduction")
@@ -279,35 +277,32 @@ end, "HOOK_LOW")
 -- One place that maps a fall height to a trick, shared by the client and the server so the animation
 -- can never disagree with the movement. 2.21.18 numbers (the user's own):
 --   0 = no trick, plain Z-City landing     below RollMinHeight (290)
---   1 = knee landing   "land" / "landgun"  RollMinHeight (290) .. RollBigHeight-1 (349)
---   2 = real roll      "meroll" / ...      RollBigHeight (350) .. RollMaxHeight (750)
+--   1 = knee landing   "land" / "landgun"  RollMinHeight (290) .. RollBigHeight (350), inclusive
+--   2 = the one roll   "meroll" / ...      above RollBigHeight (351) .. RollMaxHeight (750)
 --   0 = no trick, Z-City fall injuries     above RollMaxHeight (750) - nothing saves that fall
--- Beatrun_RollAnim 1 forces the roll, 2 forces the knee landing (inside the same height window).
+-- Only the height decides. There is exactly one roll pose (Beatrun_RollAnim / Beatrun_RollAlways are
+-- no longer used: the same fall must always give the same animation).
 -- ---------------------------------------------------------------------------
 function BeatrunRollVariantForHeight(fallHeight)
 	fallHeight = math.max(0, fallHeight or 0)
 
-	local kneeHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
+	local kneeHeight = math.max(0, cvRollMinHeight and cvRollMinHeight:GetFloat() or 290)
 	local rollHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 350
 	local maxHeight = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
-	local rollMode = cvRollAnim and cvRollAnim:GetInt() or 0
+
+	-- A server admin can type anything into the convars: keep the three numbers ordered, so a mistyped
+	-- RollBigHeight can never make a 300 unit fall play the roll, and RollMaxHeight always stays on top.
+	if rollHeight <= kneeHeight then rollHeight = kneeHeight + 1 end
+	if maxHeight <= rollHeight then maxHeight = rollHeight + 1 end
 
 	-- too far to be saved by a trick: Z-City owns that landing completely
 	if fallHeight > maxHeight then return 0, false, false, rollHeight end
 
 	local variant = 0
-	if fallHeight >= rollHeight then
+	if fallHeight > rollHeight then
 		variant = 2
 	elseif fallHeight >= kneeHeight then
 		variant = 1
-	end
-
-	if variant ~= 0 then
-		if rollMode == 1 then
-			variant = 2
-		elseif rollMode == 2 then
-			variant = 1
-		end
 	end
 
 	return variant, variant == 2, false, rollHeight
@@ -400,33 +395,19 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	ang.x = 0
 	ang.z = 0
 
-	local horizVel = ply:GetVelocity()
-	horizVel.z = 0
-
-	local standingStill = horizVel:Length() < 160 or ply:KeyDown(IN_BACK)
-
 	-- 2.21.14: the variant comes from the shared helper, so client and server always agree on it.
 	local variant, useRoll, lowRoll, bigH = BeatrunRollVariantForHeight(fallHeight)
 
-	-- Beatrun_RollAlways 0 keeps the old escape hatch: standing still / holding back = knee landing
-	if useRoll and standingStill and not ply:KeyDown(IN_BACK) and (not cvRollAlways or cvRollAlways:GetBool()) then
-		standingStill = false
-	end
-	if useRoll and standingStill and (not cvRollAlways or not cvRollAlways:GetBool()) then
-		useRoll = false
-	end
-
-	-- keep the animation in step with the movement: the downgrade above must also downgrade the pose
-	if variant ~= 0 then
-		variant = useRoll and 2 or 1
-	end
-
+	-- 2.21.19: height only. No "standing still" downgrade and no always-roll override any more - the
+	-- same fall always has to give the same landing, that was the whole point of 2.21.14.
 	ply._BRZRollVariant = variant
 
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
-		local names = { [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
-		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [knee < %.0f, roll %.0f..%.0f, low roll >= %.0f]",
-			fallHeight, variant, names[variant], bigH, bigH, bigH * 2 - 1, bigH * 2))
+		local names = { [0] = "nothing", [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
+		local maxH = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
+		local kneeH = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
+		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %.0f, knees %.0f..%.0f, roll %.0f..%.0f, nothing > %.0f]",
+			fallHeight, variant, names[variant] or "?", kneeH, kneeH, bigH, bigH + 1, maxH, maxH))
 	end
 
 	-- How long the trick owns the player: a drop from a roof rolls noticeably longer than a fence hop.
