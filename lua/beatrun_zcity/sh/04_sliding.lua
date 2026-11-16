@@ -139,6 +139,9 @@ local function EndSlideState(ply, mv, blocked, jumped, slippery)
 	end
 
 	RestorePlayerSlideState(ply)
+	ply._BRZSlideMuzzlePos = nil
+	ply._BRZSlideMuzzleDir = nil
+	ply._BRZSlideMuzzleTime = nil
 
 	-- Sync velocity cleanly back to Z-City inertia
 	if mv then
@@ -450,3 +453,95 @@ hook.Add("HG_PlayerFootstep", "BeatrunZCity_SilenceSlide", function(ply)
 		return true
 	end
 end)
+
+-- Receive the drawn right-hand pistol muzzle origin & barrel direction from the sliding client
+-- so server bullets originate from and fly along the exact direction of the animated shooting hand.
+if SERVER then
+	net.Receive("Beatrun_ZC_SlideAim", function(_, ply)
+		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return end
+		if not ply:GetSliding() or not ply._BRZSlideArmed or not BeatrunCanSlideOrRoll(ply) then return end
+
+		local mpos = net.ReadVector()
+		local mdir = net.ReadNormal()
+		if not isvector(mpos) or not isvector(mdir) then return end
+
+		local len = mdir:Length()
+		if len < 0.01 then return end
+		mdir = mdir * (1 / len)
+
+		-- Anti-exploit bounds: muzzle must stay near the sliding player and roughly aligned with real aim.
+		local anchor = ply:GetPos() + Vector(0, 0, 24)
+		if (mpos - anchor):LengthSqr() > 128 * 128 then return end
+		if mdir:Dot(ply:GetAimVector()) < 0.15 then return end
+
+		ply._BRZSlideMuzzlePos = mpos
+		ply._BRZSlideMuzzleDir = mdir
+		ply._BRZSlideMuzzleTime = CurTime()
+	end)
+end
+
+-- Redirect bullets fired during an armed slide so they originate from the drawn right-hand weapon
+-- barrel and fly strictly along its pointing direction (ignoring secondary ricochet/penetration shots).
+hook.Add("EntityFireBullets", "BeatrunZCity_SlideBulletAim", function(ent, data)
+	if not istable(data) then return end
+	if (data.penetrated and data.penetrated > 0) or (data.limit_ricochet and data.limit_ricochet > 0) then return end
+
+	local ply = data.Attacker
+	if not (IsValid(ply) and ply:IsPlayer()) then
+		if IsValid(ent) and ent:IsPlayer() then
+			ply = ent
+		elseif IsValid(ent) and ent.GetOwner and IsValid(ent:GetOwner()) and ent:GetOwner():IsPlayer() then
+			ply = ent:GetOwner()
+		else
+			return
+		end
+	end
+
+	if not ply:GetSliding() or not ply._BRZSlideArmed or ply.suiciding then return end
+	if not (isvector(ply._BRZSlideMuzzlePos) and isvector(ply._BRZSlideMuzzleDir)) then return end
+	if (CurTime() - (ply._BRZSlideMuzzleTime or 0)) > 0.25 then return end
+
+	local mpos = ply._BRZSlideMuzzlePos
+	local mdir = ply._BRZSlideMuzzleDir
+	local wpn = ply:GetActiveWeapon()
+
+	-- Wall-clip guard: if a wall lies between the sliding chest and the extended hand, clamp to the wall.
+	local chestPos = ply:GetPos() + Vector(0, 0, 20)
+	local filter = { ply }
+	if IsValid(wpn) then
+		filter[#filter + 1] = wpn
+		if IsValid(wpn.worldModel) then
+			filter[#filter + 1] = wpn.worldModel
+		end
+	end
+	local tr = util.TraceLine({
+		start = chestPos,
+		endpos = mpos,
+		filter = filter,
+		mask = MASK_SHOT
+	})
+	local safeSrc = tr.Hit and (tr.HitPos - tr.Normal * 1.5) or mpos
+
+	data.Src = safeSrc
+	data.Dir = mdir
+
+	-- Keep Z-City's client worldModel & desiredPos snapped to the drawn right-hand slide transform so
+	-- the muzzle flash spawned immediately after FireLuaBullets comes right out of the drawn barrel.
+	if CLIENT and ply == LocalPlayer() and IsValid(wpn) and isvector(wpn._BRZSlideGunPos) and isangle(wpn._BRZSlideGunAng) then
+		if (CurTime() - (wpn._BRZSlideGunTime or 0)) <= 0.15 then
+			wpn.desiredPos = wpn._BRZSlideGunPos
+			wpn.desiredAng = wpn._BRZSlideGunAng
+			local wm = wpn.worldModel
+			if IsValid(wm) then
+				wm:SetRenderOrigin(wpn._BRZSlideGunPos)
+				wm:SetRenderAngles(wpn._BRZSlideGunAng)
+				wm:SetPos(wpn._BRZSlideGunPos)
+				wm:SetAngles(wpn._BRZSlideGunAng)
+				wm:SetupBones()
+			end
+		end
+	end
+
+	return true
+end)
+

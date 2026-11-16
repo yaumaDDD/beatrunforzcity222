@@ -59,6 +59,7 @@ if SERVER then
 	util.AddNetworkString("Beatrun_ZC_SlideStart")
 	util.AddNetworkString("Beatrun_ZC_SlideEnd")
 	util.AddNetworkString("Beatrun_ZC_RollStart")
+	util.AddNetworkString("Beatrun_ZC_SlideAim")
 end
 
 function BeatrunIsZCity()
