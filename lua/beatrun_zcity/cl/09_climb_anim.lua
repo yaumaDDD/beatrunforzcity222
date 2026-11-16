@@ -39,6 +39,12 @@ function BeatrunZCityClimbAnimGrab(ang, hard)
 	climbAnimState = 1
 	ClimbClampLimits()
 
+	local cvDbg = GetConVar("Beatrun_RollDebugLog")
+	if cvDbg and cvDbg:GetBool() then
+		print(string.format("[Beatrun Z-City] climb anim: grab %s (hard=%s, rig %s)",
+			hard and "hanghardstart2" or "hanghardstart", tostring(hard), GetRigName()))
+	end
+
 	StartBodyAnim({
 		AnimString = hard and "hanghardstart2" or "hanghardstart",
 		animmodelstring = GetRigName(),
@@ -46,7 +52,7 @@ function BeatrunZCityClimbAnimGrab(ang, hard)
 		deleteonend = false,
 		followplayer = true,
 		lockang = false,
-		allowmove = false,
+		allowmove = true,
 		BodyAnimSpeed = hard and 1.25 or 1.1,
 		BodyLimitX = 70,
 		BodyLimitY = 110,
@@ -60,11 +66,16 @@ function BeatrunZCityClimbAnimHeave(ang, low)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
 
-	climbAnimState = 2
-	ClimbClampLimits()
-
 	local dur = low and 0.45 or math.max(0.2, cvHeaveTime and cvHeaveTime:GetFloat() or 0.55)
 	local seqName = low and "vaultonto" or "hangheaveup"
+
+	-- Client prediction and the server trigger can both ask for the pull-up - never restart it
+	if climbAnimState == 2 and IsValid(BodyAnim) and BodyAnimString == seqName and BodyAnimCycle < 0.5 then
+		return
+	end
+
+	climbAnimState = 2
+	ClimbClampLimits()
 
 	local cvDebug = GetConVar("Beatrun_RollDebugLog")
 	if cvDebug and cvDebug:GetBool() then
@@ -78,7 +89,7 @@ function BeatrunZCityClimbAnimHeave(ang, low)
 		deleteonend = false,
 		followplayer = true,
 		lockang = false,
-		allowmove = false,
+		allowmove = true,
 		BodyAnimSpeed = 1,
 		BodyLimitX = 70,
 		BodyLimitY = 110,

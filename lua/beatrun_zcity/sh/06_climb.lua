@@ -378,8 +378,17 @@ local function UpdateHang(ply, mv, CT)
 	if isvector(hangPos) then mv:SetOrigin(hangPos) end
 	mv:SetButtons(bit.band(mv:GetButtons(), bit.bnot(IN_JUMP)))
 
+	-- Read the movement wish BEFORE the velocity is zeroed for the hang pose
+	local wishForward = isfunction(mv.GetForwardSpeed) and mv:GetForwardSpeed() or 0
+
 	if held > 0.12 then
 		if mv:KeyPressed(IN_DUCK) then
+			ReleaseGrab(ply, mv, CT, false)
+			return
+		end
+
+		-- Backing off lets go instead of dragging you up onto the ledge
+		if mv:KeyDown(IN_BACK) or wishForward < -50 then
 			ReleaseGrab(ply, mv, CT, false)
 			return
 		end
@@ -499,14 +508,16 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 		return
 	end
 
-	if not jumpWindow then
-		-- Falling / flying: catch the ledge without extra keys (Beatrun does the same), but not when
-		-- moving away from the wall.
-		local flatVel = Vector(vel.x, vel.y, 0)
-		if flatVel:Dot(ledge.wallang:Forward()) < -160 then return end
-	else
-		ply._BRZClimbJumpWindow = nil
+	-- Never grab while actually moving away from the wall: that is what used to pull you forward when
+	-- you were backing off. Jumping at a wall from a standstill still works - only real backward
+	-- movement is rejected.
+	local flatVel = Vector(vel.x, vel.y, 0)
+	if flatVel:Dot(ledge.wallang:Forward()) < -60 then
+		Log("ledge found, but you are moving away from it - no grab")
+		return
 	end
+
+	ply._BRZClimbJumpWindow = nil
 
 	StartGrab(ply, mv, ledge, CT, jumpWindow)
 end)

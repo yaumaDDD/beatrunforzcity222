@@ -87,12 +87,14 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 	local duckNow = mv:KeyDown(IN_DUCK)
 	local sprintNow = mv:KeyDown(IN_SPEED)
 	local duckPressed = duckNow and not ply._BeatrunPrevRollDuck
-	local sprintPressed = sprintNow and not ply._BeatrunPrevRollSprint
 	ply._BeatrunPrevRollDuck = duckNow
 	ply._BeatrunPrevRollSprint = sprintNow
 
 	local velZ = mv:GetVelocity().z
-	local rollPressed = duckPressed or sprintPressed
+
+	-- 2.21.11: Ctrl only. Shift used to arm the roll as well, and because Shift is also part of
+	-- Z-City's own sprint/slide input it produced a second animation right after the roll.
+	local rollPressed = duckPressed
 
 	-- Fall height tracking (added in 2.21.7). The roll is no longer decided by the impact speed alone:
 	-- the height actually dropped is measured from the highest point of the fall, so a big fall plays the
@@ -137,7 +139,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 	-- 2.21.9: ONE tap in the air is enough. The arm sticks for the whole fall, so Ctrl never has to be
 	-- held - holding it also made Z-City start its own crouch-slide right after the roll, which looked
 	-- like the animation playing twice.
-	local holdingBrace = duckNow or sprintNow
+	local holdingBrace = duckNow
 	local airborne = not onground and not ply:GetSliding()
 	local rollBlocked = CT < (ply._BRZRollStartGuard or 0) or CT < ply:GetSafetyRollTime()
 

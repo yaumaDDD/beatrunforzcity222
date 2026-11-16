@@ -14,6 +14,7 @@ end
 local slideState = "idle" -- "idle" | "sliding" | "ending"
 local lastRollToken = 0
 local lastRollAnimAt = 0
+local lastTrickAnimAt = 0
 local slideHandled = false
 
 local function SlideAnimThink()
@@ -232,15 +233,35 @@ function BeatrunRollAnimStart(kneeLanding, lowRoll)
 		speed = 1.15
 	end
 
+	-- 2.21.11: a hard anti-double guard. A trick animation that starts less than 0.9 s after the
+	-- previous one is always the same landing being triggered twice (prediction + the server trigger,
+	-- a re-armed fall, or the crouch that follows the roll) - a real roll lasts at least that long.
+	local now = CurTime()
+	if now - lastTrickAnimAt < 0.9 then
+		local cvDbg = GetConVar("Beatrun_RollDebugLog")
+		if cvDbg and cvDbg:GetBool() then
+			print(string.format("[Beatrun Z-City] roll anim SKIPPED (%.2fs after the previous one, %s)",
+				now - lastTrickAnimAt, tostring(animName)))
+		end
+		lastRollToken = ply:GetSafetyRollTime()
+		return
+	end
+
 	-- The same trick can be requested twice: client prediction plus the server trigger, or two variants
 	-- that only differ by a frame. Restarting inside half a second replays the animation from the top,
 	-- and a real roll always lasts longer than that - so a second start is ignored.
-	local now = CurTime()
 	if IsValid(BodyAnim) and (BodyAnimString == animName or (now - lastRollAnimAt) < 0.5) then
 		lastRollToken = ply:GetSafetyRollTime()
 		return
 	end
 	lastRollAnimAt = now
+	lastTrickAnimAt = now
+
+	local cvDbg2 = GetConVar("Beatrun_RollDebugLog")
+	if cvDbg2 and cvDbg2:GetBool() then
+		print(string.format("[Beatrun Z-City] roll anim start: %s (knee=%s low=%s) at %.2f",
+			tostring(animName), tostring(kneeLanding), tostring(lowRoll), now))
+	end
 
 	slideState = "idle"
 	slideHandled = false
@@ -250,13 +271,15 @@ function BeatrunRollAnimStart(kneeLanding, lowRoll)
 	local rollAng = ply:GetSafetyRollAng()
 	local startAng = (rollAng and rollAng ~= angle_zero) and rollAng or ply:EyeAngles()
 
+	-- Same camera setup as the slide (that is the view that feels right): the camera rides the
+	-- animation's CameraJoint and the view stays yours, exactly like meslidestart/meslideloop.
 	StartBodyAnim({
 		AnimString = animName,
 		animmodelstring = GetRigName(),
 		camjoint = "CameraJoint",
 		deleteonend = true,
 		followplayer = true,
-		lockang = not kneeLanding,
+		lockang = not (cvCamLock and cvCamLock:GetInt() == 0),
 		allowmove = true,
 		BodyAnimSpeed = speed,
 		StartAngle = startAng
