@@ -134,18 +134,26 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 	end
 
 	-- Arm the safety roll without stripping IN_DUCK (avoids Z-City AntiCrouchSpam penalty).
-	-- 2.21.7: a *held* Ctrl (or Shift) is enough - you no longer have to press it again in mid-air,
-	-- which is exactly what made the roll feel unreliable when you jumped off a roof already holding Ctrl.
+	-- 2.21.9: ONE tap in the air is enough. The arm sticks for the whole fall, so Ctrl never has to be
+	-- held - holding it also made Z-City start its own crouch-slide right after the roll, which looked
+	-- like the animation playing twice.
 	local holdingBrace = duckNow or sprintNow
-	if velZ <= -300 and not onground and not ply:GetSliding() and (rollPressed or holdingBrace) then
-		ply:SetSafetyRollKeyTime(CT + 0.6)
+	local airborne = not onground and not ply:GetSliding()
+	local rollBlocked = CT < (ply._BRZRollStartGuard or 0) or CT < ply:GetSafetyRollTime()
+
+	if airborne and not rollBlocked and (rollPressed or holdingBrace) then
+		ply._BRZFallArmed = true
 	end
 
-	-- Pre-emptive brace: while Ctrl is held during a real fall the protection window stays open ahead of
-	-- the impact, so Z-City's fallStun/ragdoll is already blocked when the ground arrives.
-	if holdingBrace and not onground and not ply:GetSliding() and velZ <= -250 then
+	-- Armed for this fall: keep the roll armed until the ground arrives and brace the impact ahead of
+	-- time, so Z-City's fallStun/ragdoll is already blocked when the feet touch.
+	if airborne and ply._BRZFallArmed and not rollBlocked then
+		ply:SetSafetyRollKeyTime(CT + 0.5)
 		ply._BRZBraced = true
-		ply._BRZBracedUntil = CT + 0.3
+		ply._BRZBracedUntil = CT + 0.35
+	elseif onground and ply._BRZFallArmed and CT > ply:GetSafetyRollKeyTime() then
+		-- landed without a trick (too low or a bad spot) - the arm has done its job
+		ply._BRZFallArmed = nil
 	end
 
 	local isArming = CT < ply:GetSafetyRollKeyTime()
@@ -213,6 +221,12 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	local maxSafeSpeed = cvMaxSafeRollSpeed:GetFloat()
 
 	if CT > ply:GetSafetyRollKeyTime() then return end
+
+	-- The arm belongs to exactly one landing, and a roll that just started must not be re-triggered
+	-- by the next physics frame (that was the other half of the "animation plays twice" bug).
+	ply._BRZFallArmed = nil
+	if CT < (ply._BRZRollStartGuard or 0) then return end
+	ply._BRZRollStartGuard = CT + 0.45
 
 	-- The hard cap used to be 820: any fall faster than that skipped the roll entirely, so the ragdoll
 	-- and the broken legs came through even though the player pressed in time. Now the timing is the

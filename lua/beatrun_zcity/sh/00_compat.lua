@@ -28,7 +28,7 @@ CreateConVar("Beatrun_ZCity_ClimbHangHeight", "74", REP, "Ledge climb: how far (
 CreateConVar("Beatrun_ZCity_ClimbMaxLedgeHeight", "84", REP, "Ledge climb: maximum ledge height above your feet that can be grabbed", 24, 140)
 CreateConVar("Beatrun_ZCity_ClimbLowHeight", "46", REP, "Ledge climb: up to this height you vault onto the wall (vaultonto), above it you hang and pull yourself up (hangheaveup)", 12, 120)
 CreateConVar("Beatrun_ZCity_ClimbReach", "60", REP, "Ledge climb: how far ahead of you a wall is detected (units)", 24, 120)
-CreateConVar("Beatrun_ZCity_ClimbHoldDelay", "0.35", REP, "Ledge climb: how long you hang before holding W pulls you up", 0, 2)
+CreateConVar("Beatrun_ZCity_ClimbHoldDelay", "0.35", REP, "Ledge climb: how long you hang before the pull-up starts by itself", 0, 2)
 CreateConVar("Beatrun_ZCity_ClimbHeaveTime", "0.55", REP, "Ledge climb: duration of the pull-up (seconds)", 0.2, 1.5)
 CreateConVar("Beatrun_ZCity_ClimbCooldown", "0.45", REP, "Ledge climb: delay after a climb before the next grab can start", 0, 3)
 CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether the roll accepted them", 0, 1)

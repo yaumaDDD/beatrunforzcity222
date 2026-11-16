@@ -3,10 +3,10 @@
 -- no view/angle lock. The origin is driven inside SetupMove (predicted on the client and repeated on
 -- the server) and the animation goes through StartBodyAnim like the slide and the safety roll.
 --
--- Flow:
+-- Flow (2.21.9: no extra keys - you just jump into the wall):
 --   * jump at a wall, or fly into one while falling  -> grab
 --   * low ledge (waist/chest height)                 -> immediate pull-up onto it (vaultonto)
---   * high ledge                                     -> hang, then hold W to pull up (hangheaveup)
+--   * high ledge                                     -> hang, then the pull-up starts by itself (hangheaveup)
 --   * while hanging: Ctrl drops you, Jump pushes you off the wall (the safety roll gets armed)
 
 local cvEnabled = GetConVar("Beatrun_ZCity_ClimbEnabled")
@@ -384,15 +384,16 @@ local function UpdateHang(ply, mv, CT)
 			return
 		end
 
-		if held > cvHoldDelay:GetFloat() + 0.05 then
+		if held > cvHoldDelay:GetFloat() then
 			if mv:KeyPressed(IN_JUMP) then
 				ReleaseGrab(ply, mv, CT, true)
 				return
 			end
-			if mv:KeyDown(IN_FORWARD) then
-				StartHeave(ply, mv, CT, false)
-				return
-			end
+
+			-- 2.21.9: the pull-up no longer waits for W. After a short hang the climb finishes by
+			-- itself, so "jump at the wall" is the whole input and the animation carries you up.
+			StartHeave(ply, mv, CT, false)
+			return
 		end
 	end
 
@@ -474,22 +475,14 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 	local vel = mv:GetVelocity()
 
 	local jumpWindow = (ply._BRZClimbJumpWindow or 0) > CT
-	local sprintInto = false
 
+	-- 2.21.9: the only way in from the ground is jumping at the wall - no sprint+W combos, no extra
+	-- keys. The grab itself happens a few ticks later, in the air, exactly like Beatrun.
 	if onground then
-		-- Two intentional ways to start a climb from the ground:
-		--   1) press jump at the wall  -> the grab itself happens a few ticks later, in the air
-		--   2) sprint (Shift) + W into the wall -> grab straight away, like Beatrun
 		if mv:KeyPressed(IN_JUMP) then
 			ply._BRZClimbJumpWindow = CT + 0.45
-			return
 		end
-
-		if not (mv:KeyDown(IN_SPEED) and mv:KeyDown(IN_FORWARD)) then
-			return
-		end
-
-		sprintInto = true
+		return
 	elseif vel.z > 150 and not jumpWindow then
 		return -- still rising fast, the hands are not there yet
 	end
@@ -506,11 +499,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 		return
 	end
 
-	if sprintInto then
-		-- only when actually running into that wall
-		local flatVel = Vector(vel.x, vel.y, 0)
-		if flatVel:Dot(ledge.wallang:Forward()) < 120 then return end
-	elseif not jumpWindow and not onground then
+	if not jumpWindow then
 		-- Falling / flying: catch the ledge without extra keys (Beatrun does the same), but not when
 		-- moving away from the wall.
 		local flatVel = Vector(vel.x, vel.y, 0)
@@ -519,8 +508,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 		ply._BRZClimbJumpWindow = nil
 	end
 
-	local fromGround = onground or jumpWindow or sprintInto
-	StartGrab(ply, mv, ledge, CT, fromGround)
+	StartGrab(ply, mv, ledge, CT, jumpWindow)
 end)
 
 -- Reset on death/spawn so a ragdoll or respawn never leaves a player stuck mid-climb

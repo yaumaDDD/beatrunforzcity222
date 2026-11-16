@@ -13,6 +13,7 @@ end
 
 local slideState = "idle" -- "idle" | "sliding" | "ending"
 local lastRollToken = 0
+local lastRollAnimAt = 0
 local slideHandled = false
 
 local function SlideAnimThink()
@@ -231,11 +232,15 @@ function BeatrunRollAnimStart(kneeLanding, lowRoll)
 		speed = 1.15
 	end
 
-	-- The same animation may be requested twice (client prediction + the network trigger) - don't restart it
-	if IsValid(BodyAnim) and BodyAnimString == animName then
+	-- The same trick can be requested twice: client prediction plus the server trigger, or two variants
+	-- that only differ by a frame. Restarting inside half a second replays the animation from the top,
+	-- and a real roll always lasts longer than that - so a second start is ignored.
+	local now = CurTime()
+	if IsValid(BodyAnim) and (BodyAnimString == animName or (now - lastRollAnimAt) < 0.5) then
 		lastRollToken = ply:GetSafetyRollTime()
 		return
 	end
+	lastRollAnimAt = now
 
 	slideState = "idle"
 	slideHandled = false
