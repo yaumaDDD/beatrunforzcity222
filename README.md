@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.0
+**Версия:** 2.21.1
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_addon.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity/raw/arena/cc40ee8a-beatrunforzcity/beatrun_zcity_addon.zip>
+1. Скачать `beatrun_zcity_2.21.1.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.1.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `BeatrunZCity 2.21.0`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.1`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -92,6 +92,21 @@ if IsValid(ply.FakeRagdoll) or BeatrunIsThirdPerson(ply) then return end
 играет слайд или страховочный перекат**, в том числе в третьем лице. Когда трюк заканчивается,
 камера плавно (лерп) возвращается на обычную камеру Z-City — то есть переключение происходит
 ровно на момент выполнения трюка, а не постоянно.
+
+### 2.21.1 — исправлена отрисовка оружия и ведение рук за мышью в подкате
+
+В `2.21.0` оставались две причины, из-за которых игрок в подкате всё равно «стрелял из пустой руки», а сама рука не шла за прицелом:
+
+1. `ply.RenderOverride` во время подката вообще не вызывался: аддон ставил `ply:SetNoDraw(true)`, `view.drawviewer = false`, `ShouldDrawLocalPlayer -> false` и `PrePlayerDraw -> true`. Даже при вызове `DrawPlayerRagdoll` локальное оружие Z-City (`localdraw`) пропускалось, а `SWEP:Camera` заранее перезаписывал `wm:SetRenderOrigin/SetRenderAngles`.
+2. Руки (`BodyAnimMDLarm`) рисовались в `PostDrawOpaqueRenderables` просто приклеенными через `EF_BONEMERGE` к статичной позе `meslideloop` без TPIK.
+
+Что сделано:
+- Отрисовка оружия Z-City перенесена прямо в `PostDrawOpaqueRenderables` (`BeatrunZCity_DrawBodyAnim`) перед отрисовкой `BodyAnimMDLarm` (в том же `cam.IgnoreZ` и порядке, что у Z-City: ствол → обвесы → TPIK рук → модель рук).
+- Для огнестрела (`wpn.WorldModel_Transform`) обновляются кости (`ply:SetupBones()`, `BodyAnim:SetupBones()`), считается `WorldModel_Transform(true, false, wm)` без фиксации прицела на голове (свободное наведение мышью), позиция переносится на высоту глаз слайд-камеры/головы рига, выставляются `SetRenderOrigin/Angles` + `SetPos/Angles`, синхронизируется цикл фейк-модели и рисуются `wm:DrawModel()` + `wpn:DrawAttachments()`. Для ближнего боя / TPIK-предметов (`wpn.DrawWorldModel2`) вызывается `DrawWorldModel2`.
+- Перед отрисовкой `BodyAnimMDLarm` (у которого та же модель и те же индексы костей, что у `ply`) вызываются `wpn:SetHandPos()` (с временной подстановкой `ply.FakeRagdoll`/`ply.OldRagdoll = BodyAnimMDLarm` внутри `pcall` и мгновенным возвратом) и `hg.DoTPIK(ply, BodyAnimMDLarm)` каждый кадр — обе руки хватают оружие и плавно идут за мышью.
+- В `BeatrunSlideAnimStart` синхронизируется `ply._BRZSlideArmed`, чтобы в мультиплеере свободное прицеливание не залипало.
+- В `beatrun_zcity_debug` добавлена строка `slide weapon draw` / `TPIK` / `worldModel`.
+- Камера (`Beatrun_TrickCam*`) и механики Z-City (`hg.organism`, `hg.Fake`) не тронуты.
 
 ### 2.21.0 — оружие в руке рисует сам Z-City (на нашем риге)
 

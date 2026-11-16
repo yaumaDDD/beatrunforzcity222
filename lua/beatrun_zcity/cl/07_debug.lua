@@ -44,6 +44,7 @@ local function Report()
 		print("viewmodel:          valid=false (Z-City weapons draw as world models at the hand)")
 	end
 	print("Z-City render:      DrawPlayerRagdoll=" .. Str(type(DrawPlayerRagdoll)) .. " RenderOverride=" .. Str(type(ply.RenderOverride)))
+	print("slide weapon draw:  " .. Str(BeatrunZCitySlideWeaponState) .. " | TPIK=" .. Str(BeatrunZCitySlideTPIKState) .. " | worldModel=" .. tostring(IsValid(wpn) and IsValid(wpn.worldModel)))
 	print("slide armed flag:   " .. tostring(ply._BRZSlideArmed ~= nil and ply._BRZSlideArmed or false))
 	print("sliding:            " .. tostring(Safe(ply.GetSliding, ply)))
 	print("roll time left:     " .. tostring(rollLeft))

@@ -281,17 +281,10 @@ function BeatrunHideStaticPlayerModel(ply)
 
 	ply._BRZHiddenOverride = ply.RenderOverride or false
 
-	-- Z-City draws the player's weapon itself: its RenderOverride (DrawPlayerRagdoll) calls
-	-- hg.RenderWeapons -> SWEP:WorldModel_Transform, which puts the gun in the hand bone of the entity
-	-- and its IKs the arms onto the gun. Replacing that override with an empty function is what made the
-	-- pistol vanish from the slide - the static body was hidden, and so was the weapon with it.
-	-- Instead of switching Z-City's render path off, hand it our animated body as the entity to draw on.
-	ply.RenderOverride = function(ent)
-		if not IsValid(BodyAnim) then return end
-		if not isfunction(DrawPlayerRagdoll) then return end
-
-		pcall(DrawPlayerRagdoll, BodyAnim, ply)
-	end
+	-- Suppress Z-City's static player render while BodyAnim is active (ply:SetNoDraw(true) and
+	-- view.drawviewer = false prevent RenderOverride from executing anyway). The Z-City weapon
+	-- and TPIK-posed arms are drawn directly alongside BodyAnimMDL in PostDrawOpaqueRenderables.
+	ply.RenderOverride = function() end
 
 	-- Same approach as Beatrun itself: the engine never draws the local player while the animated
 	-- body replaces it, so Z-City's RenderOverride never runs and no second body can appear.
@@ -362,6 +355,8 @@ function RemoveBodyAnim(smooth)
 	BodyAnim = nil
 	lastTrickCamPos = nil
 	BeatrunZCityTrickEyePos = nil
+	BeatrunZCitySlideWeaponState = nil
+	BeatrunZCitySlideTPIKState = nil
 
 	BodyAnimString = "nil"
 	BodyAnimCycle = 0
@@ -538,22 +533,193 @@ hook.Add("Think", "BeatrunZCity_BodyAnimThink", function()
 end)
 
 local cvSlideWeapon = GetConVar("Beatrun_ZCity_SlideWeapon")
+local lastTPIKFrame = -1
 
-hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function()
+-- World-space translation from ply's ducked/standing eye anchor (where Z-City's
+-- WorldModel_Transform places the gun) down to our sliding rig's camera/head, while keeping
+-- Z-City's full unclamped mouse-aim orientation, sway, recoil, ADS and reload animations.
+local function GetSlideWeaponEyeShift(ply, wpn)
+	local targetEye
+	if GetTrickCamMode() == 0 and not BeatrunIsThirdPerson(ply) and isvector(BeatrunZCityTrickEyePos) then
+		local aimUp = ply:GetAimVector():Angle():Up()
+		targetEye = BeatrunZCityTrickEyePos - aimUp * 1
+	else
+		local headBone = BodyAnim:LookupBone("ValveBiped.Bip01_Head1") or BodyAnim:LookupBone("ValveBiped.Bip01_Neck1")
+		if headBone then
+			local headPos = BodyAnim:GetBonePosition(headBone)
+			if isvector(headPos) then
+				targetEye = headPos + Vector(0, 0, 3)
+			end
+		end
+	end
+
+	if not isvector(targetEye) then return vector_origin end
+
+	local srcEye = isvector(wpn.fuckingfuckpos) and wpn.fuckingfuckpos or ply:EyePos()
+	local shift = targetEye - srcEye
+	if shift:LengthSqr() > 96 * 96 then return vector_origin end
+	return shift
+end
+
+local function AdvanceZCityFakeModelCycle(wpn, wm)
+	if not (isfunction(wpn.ShouldUseFakeModel) and wpn:ShouldUseFakeModel()) then return end
+	if wpn.seq then wm:SetSequence(wpn.seq) end
+	if not (isnumber(wpn.animtime) and isnumber(wpn.animspeed) and wpn.animspeed ~= 0) then return end
+
+	local timing
+	if not wpn.cycling then
+		timing = 1 - math.Clamp((wpn.animtime - CurTime()) / wpn.animspeed, 0, 1)
+		timing = wpn.reverseanim and (1 - timing) or timing
+	else
+		timing = ((CurTime() - (wpn.animtime - wpn.animspeed)) % wpn.animspeed) / wpn.animspeed
+	end
+	wm:SetCycle(timing)
+end
+
+local function CanRunZCityTPIKOn(armEnt)
+	if not IsValid(armEnt) then return false end
+	return armEnt:LookupBone("ValveBiped.Bip01_Head1") ~= nil
+		and armEnt:LookupBone("ValveBiped.Bip01_Pelvis") ~= nil
+		and armEnt:LookupBone("ValveBiped.Bip01_R_UpperArm") ~= nil
+		and armEnt:LookupBone("ValveBiped.Bip01_R_Forearm") ~= nil
+		and armEnt:LookupBone("ValveBiped.Bip01_R_Hand") ~= nil
+end
+
+-- Poses BodyAnimMDLarm (which shares ply's exact model and ValveBiped bone indices) onto the drawn
+-- Z-City weapon via SWEP:SetHandPos() + hg.DoTPIK(), so both hands grip the gun and follow the mouse.
+local function ApplySlideWeaponTPIK(ply, wpn, armEnt, handPos, handAng)
+	if not IsValid(armEnt) or not CanRunZCityTPIKOn(armEnt) then return false end
+	if not (hg and isfunction(hg.DoTPIK)) then return false end
+
+	-- SWEP:SetHandPos() targets IsValid(ply.FakeRagdoll) and ply.FakeRagdoll or ply, and keeps
+	-- two-handed left-hand IK enabled when InUse() sees IsValid(ply.OldRagdoll). Temporarily point
+	-- both at our arm model for the synchronous pcall and restore immediately afterwards.
+	local prevFake = ply.FakeRagdoll
+	local prevOld = ply.OldRagdoll
+	local prevHandPos, prevHandAng = wpn.handPos, wpn.handAng
+
+	if isvector(handPos) and isangle(handAng) then
+		wpn.handPos = handPos
+		wpn.handAng = handAng
+	end
+
+	ply.FakeRagdoll = armEnt
+	ply.OldRagdoll = armEnt
+	local okHand = true
+	if isfunction(wpn.SetHandPos) then
+		okHand = pcall(wpn.SetHandPos, wpn)
+	end
+	ply.FakeRagdoll = prevFake
+	ply.OldRagdoll = prevOld
+	wpn.handPos = prevHandPos
+	wpn.handAng = prevHandAng
+
+	if lastTPIKFrame ~= FrameNumber() then
+		lastTPIKFrame = FrameNumber()
+		-- Allow DoTPIK to solve every render frame rather than stalling between server ticks at high FPS
+		ply.nextrebuild = 0
+	end
+
+	local okIK = pcall(hg.DoTPIK, ply, armEnt)
+	return okHand and okIK
+end
+
+-- Draws the local player's active Z-City weapon directly in our render pass. While ply has
+-- SetNoDraw(true) and view.drawviewer = false, ply.RenderOverride never executes, so Z-City's
+-- DrawPlayerRagdoll -> hg.RenderWeapons never gets a chance to draw the worldModel.
+local function DrawSlideZCityWeapon(ply)
+	if not BeatrunWeaponArmed(ply) then
+		BeatrunZCitySlideWeaponState = "unarmed"
+		return false
+	end
+
+	local wpn = ply:GetActiveWeapon()
+	if not IsValid(wpn) then
+		BeatrunZCitySlideWeaponState = "no weapon"
+		return false
+	end
+
+	-- ply has SetNoDraw(true) during the trick so its bone cache stops refreshing automatically.
+	-- Refresh both ply and BodyAnim bones so WorldModel_Transform / eyeTrace never hit nil matrices.
+	ply:SetupBones()
+	BodyAnim:SetupBones()
+
+	-- Z-City firearms (homigrad_base)
+	if isfunction(wpn.WorldModel_Transform) then
+		if not IsValid(wpn.worldModel) and isfunction(wpn.CreateWorldModel) then
+			local okCreate, created = pcall(wpn.CreateWorldModel, wpn)
+			if okCreate and IsValid(created) and not IsValid(wpn.worldModel) then
+				wpn.worldModel = created
+			end
+		end
+
+		local wm = wpn.worldModel
+		if not IsValid(wm) then
+			BeatrunZCitySlideWeaponState = "no worldModel"
+			return false
+		end
+
+		-- Compute with ply.FakeRagdoll untouched (nil): Z-City uses ply:GetAimVector() freely instead
+		-- of clamping weapon aim to the head bone (which FakeRagdoll forces when IN_USE is not held).
+		local ok, pos, ang, handPos, handAng = pcall(wpn.WorldModel_Transform, wpn, true, false, wm)
+		if not ok or not isvector(pos) or not isangle(ang) then
+			BeatrunZCitySlideWeaponState = "transform failed"
+			return false
+		end
+
+		local shift = GetSlideWeaponEyeShift(ply, wpn)
+		pos = pos + shift
+		if isvector(handPos) then
+			handPos = handPos + shift
+		end
+
+		AdvanceZCityFakeModelCycle(wpn, wm)
+
+		-- Both SetRenderOrigin/Angles and SetPos/Angles are required: SWEP:Camera already wrote
+		-- SetRenderOrigin during CalcView, which otherwise overrides SetPos during DrawModel.
+		wm:SetRenderOrigin(pos)
+		wm:SetRenderAngles(ang)
+		wm:SetPos(pos)
+		wm:SetAngles(ang)
+		wm:SetupBones()
+		wm:DrawModel()
+
+		if isfunction(wpn.DrawAttachments) then
+			pcall(wpn.DrawAttachments, wpn)
+		end
+
+		BeatrunZCitySlideWeaponState = "gun ok"
+		return true, wpn, handPos, handAng
+	end
+
+	-- Z-City melee & TPIK items (weapon_melee, weapon_tpik_base, medicine, etc.)
+	if isfunction(wpn.DrawWorldModel2) then
+		local ok = pcall(wpn.DrawWorldModel2, wpn)
+		BeatrunZCitySlideWeaponState = ok and "melee/tpik ok" or "DrawWorldModel2 err"
+		return ok, wpn, nil, nil
+	end
+
+	BeatrunZCitySlideWeaponState = "non-zcity weapon"
+	return false
+end
+
+hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDrawingDepth, bDrawingSkybox, bDrawing3DSkybox)
+	if bDrawingDepth or bDrawingSkybox or bDrawing3DSkybox or RENDERING_SCOPE then return end
+
 	local ply = LocalPlayer()
 	if not IsBodyAnimVisible(ply) then return end
 
-	-- Beatrun_ZCity_SlideWeapon 0: clean first person (viewmodel only, body hidden).
-	-- 1 (default): the animated body stays, and the weapon is drawn in its animated hand.
-	if BeatrunWeaponArmed(ply) and cvSlideWeapon and cvSlideWeapon:GetInt() == 0 then return end
-
+	-- Beatrun_ZCity_SlideWeapon 0: hide animated body legs/torso, still draw weapon & arms.
+	-- 1 (default): draw animated body legs/torso together with the weapon and IK arms.
+	local armed = BeatrunWeaponArmed(ply)
+	local hideBody = armed and cvSlideWeapon and cvSlideWeapon:GetInt() == 0
 
 	-- In third person (and with the third person trick camera) the body has to respect depth,
 	-- otherwise it is drawn through walls
 	local ignorez = not BeatrunIsThirdPerson(ply) and GetTrickCamMode() == 0
 	if ignorez then cam.IgnoreZ(true) end
 
-	if IsValid(BodyAnimMDL) then
+	if not hideBody and IsValid(BodyAnimMDL) then
 		BodyAnimMDL:SetPos(BodyAnim:GetPos())
 		BodyAnimMDL:SetAngles(BodyAnim:GetAngles())
 		HideHeadBones(BodyAnimMDL)
@@ -562,11 +728,26 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function()
 		pcall(hook.Run, "PostDrawAppearance", BodyAnimMDL, ply)
 	end
 
-	-- The arms are posed by Z-City's own IK (hg.MainTPIKFunction on our rig) while the weapon is drawn at
-	-- the rig hand, so they must stay drawn in both cases.
+	-- Draw Z-City weapon BEFORE posing & drawing BodyAnimMDLarm (matching Z-City's DrawPlayerRagdoll
+	-- order: RenderWeapons -> MainTPIKFunction -> DrawModel), so worldModel bones and foregrip
+	-- attachments are already at the shifted transform when SetHandPos + DoTPIK pose the arms.
+	local drewWeapon, wpn, handPos, handAng = DrawSlideZCityWeapon(ply)
+
 	if IsValid(BodyAnimMDLarm) then
 		BodyAnimMDLarm:SetPos(BodyAnim:GetPos())
 		BodyAnimMDLarm:SetAngles(BodyAnim:GetAngles())
+		if isfunction(BodyAnimMDLarm.InvalidateBoneCache) then
+			BodyAnimMDLarm:InvalidateBoneCache()
+		end
+		BodyAnimMDLarm:SetupBones()
+
+		if drewWeapon and IsValid(wpn) then
+			local tpikOK = ApplySlideWeaponTPIK(ply, wpn, BodyAnimMDLarm, handPos, handAng)
+			BeatrunZCitySlideTPIKState = tpikOK and "ok" or "fallback"
+		else
+			BeatrunZCitySlideTPIKState = armed and "none" or "unarmed"
+		end
+
 		pcall(hook.Run, "CoolPostDrawAppearance", BodyAnimMDLarm, BodyAnimMDLarm)
 		BodyAnimMDLarm:DrawModel()
 		pcall(hook.Run, "PostDrawAppearance", BodyAnimMDLarm, BodyAnimMDLarm)
