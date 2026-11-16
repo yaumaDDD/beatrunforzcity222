@@ -408,6 +408,24 @@ end, "HOOK_LOW")
 local FallStunOriginal
 
 local function FallStunWrapper(ply, inwater, onfloater, speed)
+	-- 2.21.13: the roll hooks above already accepted this very landing. Z-City's fallStun would then
+	-- run its own landing/stun on top of the roll - that is the second animation you see after a
+	-- successful roll, because this hook fires again for the same impact.
+	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
+		local CT = CurTime()
+		local rollEnd = (isfunction(ply.GetSafetyRollTime) and ply:GetSafetyRollTime()) or 0
+		local blocked = CT <= (ply._BeatrunRollHandledUntil or 0)   -- this landing was taken by the roll
+			or CT < rollEnd                                         -- the roll is still playing
+			or ply._BRZFallArmed                                    -- a roll is armed and will take it
+
+		if blocked then
+			if cvRollDebugLog and cvRollDebugLog:GetBool() then
+				print("[Beatrun Z-City] Z-City fallStun blocked - the roll owns this landing")
+			end
+			return true
+		end
+	end
+
 	local ok, consumed = pcall(TrySafetyRoll, ply, inwater, onfloater, speed)
 	if ok and consumed then return true end
 	if FallStunOriginal then return FallStunOriginal(ply, inwater, onfloater, speed) end

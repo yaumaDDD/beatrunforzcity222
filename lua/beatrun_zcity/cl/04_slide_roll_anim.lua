@@ -284,6 +284,17 @@ function BeatrunRollAnimStart(kneeLanding, lowRoll)
 		BodyAnimSpeed = speed,
 		StartAngle = startAng
 	})
+
+	-- 2.21.13: match the animation length to the trick length instead of a fixed speed. A 400 unit
+	-- fall rolls for ~1.6 s while "meroll" is much shorter, so the pose used to end early (and any
+	-- re-trigger looked like the animation playing a second time).
+	if IsValid(BodyAnim) then
+		local seqDur = BodyAnim:SequenceDuration()
+		local want = ply._BRZRollSeconds or ((ply:GetSafetyRollTime() or 0) - CurTime())
+		if seqDur and seqDur > 0.05 and want and want > 0.15 then
+			BodyAnimSpeed = math.Clamp(seqDur / want, 0.6, 2)
+		end
+	end
 end
 
 function BeatrunRollAnimAbort()
