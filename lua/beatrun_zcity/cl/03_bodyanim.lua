@@ -439,6 +439,7 @@ function RemoveBodyAnim(smooth)
 	if IsValid(ply) then
 		ply._BRZSlideMuzzlePos = nil
 		ply._BRZSlideMuzzleDir = nil
+		ply._BRZSlideMuzzleAng = nil
 		ply._BRZSlideMuzzleTime = nil
 	end
 
@@ -725,7 +726,7 @@ local function ComputeSlideMuzzle(wpn, wm, gunPos, gunAng, ply)
 			gpos, gang = LocalToWorld(mat:GetTranslation(), mat:GetAngles(), gpos, gang)
 		end
 		local mpos, mang = LocalToWorld(wpn.LocalMuzzlePos, wpn.LocalMuzzleAng, gpos, gang)
-		return mpos, mang:Forward()
+		return mpos, mang
 	end
 
 	if IsValid(wm) then
@@ -734,20 +735,23 @@ local function ComputeSlideMuzzle(wpn, wm, gunPos, gunAng, ply)
 		if attIdx and attIdx > 0 then
 			local att = wm:GetAttachment(attIdx)
 			if att and isvector(att.Pos) and isangle(att.Ang) then
-				return att.Pos, att.Ang:Forward()
+				return att.Pos, att.Ang
 			end
 		end
 	end
 
-	return gunPos, ply:GetAimVector()
+	return gunPos, ply:GetAimVector():Angle()
 end
 
-local function SyncSlideMuzzleAim(ply, wpn, gunPos, gunAng, muzzlePos, muzzleDir)
+local function SyncSlideMuzzleAim(ply, wpn, gunPos, gunAng, muzzlePos, muzzleAng)
 	local now = CurTime()
 	local firstFrame = not isvector(ply._BRZSlideMuzzlePos)
+	local muzzleDir = isangle(muzzleAng) and muzzleAng:Forward() or ply:GetAimVector()
+	if not isangle(muzzleAng) then muzzleAng = muzzleDir:Angle() end
 
-	ply._BRZSlideMuzzlePos = muzzlePos
-	ply._BRZSlideMuzzleDir = muzzleDir
+	ply._BRZSlideMuzzlePos = Vector(muzzlePos)
+	ply._BRZSlideMuzzleDir = Vector(muzzleDir)
+	ply._BRZSlideMuzzleAng = Angle(muzzleAng)
 	ply._BRZSlideMuzzleTime = now
 
 	wpn._BRZSlideGunPos = gunPos
@@ -857,6 +861,32 @@ local function ApplySlideWeaponTPIK(ply, wpn, armEnt, handPos, handAng)
 	return okHand and okIK
 end
 
+-- Z-City spawns the muzzle flash/smoke/lights from SWEP:GetMuzzleAtt(self.worldModel, true), i.e. it
+-- asks the WORLD MODEL entity where its "muzzle" attachment currently is. During a slide the drawn gun
+-- rides the animated right hand, and the world-model entity only carries that transform for the frame
+-- it is drawn (Z-City itself keeps moving it back to the standing first-person pose), so the flash and
+-- the smoke came out where a standing gun would be - the "they fly off somewhere" bug.
+-- While an armed slide is live we answer that exact query with the barrel transform we computed for the
+-- drawn gun, so the flash, the smoke and the dynamic light all sit on the barrel.
+local function EnsureSlideMuzzleAttOverride(wpn)
+	if not IsValid(wpn) or not isfunction(wpn.GetMuzzleAtt) then return end
+	if wpn._BRZOrigGetMuzzleAtt then return end
+	local orig = wpn.GetMuzzleAtt
+	wpn._BRZOrigGetMuzzleAtt = orig
+	wpn.GetMuzzleAtt = function(self, ent, trueAtt, supressorAdd)
+		local ply = (IsValid(self) and isfunction(self.GetOwner)) and self:GetOwner() or nil
+		if IsValid(ply) and ply:IsPlayer() and ply == LocalPlayer()
+			and isfunction(ply.GetSliding) and ply:GetSliding() and ply._BRZSlideArmed
+			and isvector(ply._BRZSlideMuzzlePos) and isangle(ply._BRZSlideMuzzleAng)
+			and (CurTime() - (ply._BRZSlideMuzzleTime or 0)) <= 0.25
+		then
+			-- Fresh table every call: Z-City mutates the returned Pos/Ang in some of its callers.
+			return { Pos = Vector(ply._BRZSlideMuzzlePos), Ang = Angle(ply._BRZSlideMuzzleAng) }
+		end
+		return orig(self, ent, trueAtt, supressorAdd)
+	end
+end
+
 -- Draws the local player's active Z-City weapon directly in our render pass. While ply has
 -- SetNoDraw(true) and view.drawviewer = false, ply.RenderOverride never executes, so Z-City's
 -- DrawPlayerRagdoll -> hg.RenderWeapons never gets a chance to draw the worldModel.
@@ -918,8 +948,9 @@ local function DrawSlideZCityWeapon(ply, bodyEnt)
 			pcall(wpn.DrawAttachments, wpn)
 		end
 
-		local muzzlePos, muzzleDir = ComputeSlideMuzzle(wpn, wm, pos, ang, ply)
-		SyncSlideMuzzleAim(ply, wpn, pos, ang, muzzlePos, muzzleDir)
+		local muzzlePos, muzzleAng = ComputeSlideMuzzle(wpn, wm, pos, ang, ply)
+		SyncSlideMuzzleAim(ply, wpn, pos, ang, muzzlePos, muzzleAng)
+		EnsureSlideMuzzleAttOverride(wpn)
 
 		BeatrunZCitySlideWeaponState = "gun ok (1H right)"
 		return true, wpn, handPos, handAng

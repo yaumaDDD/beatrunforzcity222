@@ -198,6 +198,7 @@ local function EndSlideState(ply, mv, blocked, jumped, slippery, fellOff)
 	RestorePlayerSlideState(ply)
 	ply._BRZSlideMuzzlePos = nil
 	ply._BRZSlideMuzzleDir = nil
+	ply._BRZSlideMuzzleAng = nil
 	ply._BRZSlideMuzzleTime = nil
 
 	-- Sync velocity cleanly back to Z-City inertia

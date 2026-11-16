@@ -121,5 +121,6 @@ function BeatrunResetSlideRollState(ply)
 	ply._BeatrunWasActiveMove = nil
 	ply._BRZSlideMuzzlePos = nil
 	ply._BRZSlideMuzzleDir = nil
+	ply._BRZSlideMuzzleAng = nil
 	ply._BRZSlideMuzzleTime = nil
 end
