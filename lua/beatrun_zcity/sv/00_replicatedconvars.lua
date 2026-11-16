@@ -1,0 +1,28 @@
+-- Admin-only replicated ConVar updater for Slide & Safety Roll menu
+
+local ALLOWED_CONVARS = {
+	["beatrun_zcity_slideenabled"] = true,
+	["beatrun_zcity_rollenabled"] = true,
+	["beatrun_zcity_slideminspeed"] = true,
+	["beatrun_zcity_organismimpact"] = true,
+	["beatrun_zcity_staminadrain"] = true,
+	["beatrun_zcity_rollfallreduction"] = true,
+	["beatrun_zcity_maxsaferollspeed"] = true,
+	["beatrun_rollspeedloss"] = true,
+	["beatrun_rollalways"] = true,
+	["beatrun_zcity_slideautohold"] = true,
+	["beatrun_rollanim"] = true,
+}
+
+net.Receive("Beatrun_ChangeConvar", function(_, ply)
+	if not IsValid(ply) or not ply:IsAdmin() then return end
+
+	local name = string.lower(net.ReadString() or "")
+	if not ALLOWED_CONVARS[name] then return end
+
+	local value = net.ReadString() or ""
+	local cv = GetConVar(name)
+	if cv then
+		RunConsoleCommand(cv:GetName(), value)
+	end
+end)
