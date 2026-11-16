@@ -187,30 +187,43 @@ local function HideHeadBones(ent)
 	ApplyHiddenHeadBoneMatrices(ent)
 end
 
-local function CopyModelAppearance(src, dst)
+local function CopyModelAppearance(src, dst, isPlayerModel)
 	if not IsValid(src) or not IsValid(dst) then return end
-	dst:SetSkin(src:GetSkin() or 0)
 
-	local bgs = src:GetBodyGroups()
-	if istable(bgs) then
-		for _, bg in ipairs(bgs) do
-			dst:SetBodygroup(bg.id, src:GetBodygroup(bg.id) or 0)
-		end
+	if BeatrunZCityAppCompat and isfunction(BeatrunZCityAppCompat.CopyCleanAppearance) then
+		BeatrunZCityAppCompat.CopyCleanAppearance(src, dst, isPlayerModel)
+		return
 	end
 
-	local mats = src:GetMaterials()
-	if istable(mats) then
-		for i = 0, #mats - 1 do
-			local sub = src:GetSubMaterial(i)
-			if sub and sub ~= "" then
-				dst:SetSubMaterial(i, sub)
+	if src:GetModel() == dst:GetModel() then
+		dst:SetSkin(src:GetSkin() or 0)
+
+		local bgs = src:GetBodyGroups()
+		if istable(bgs) then
+			for _, bg in ipairs(bgs) do
+				dst:SetBodygroup(bg.id, src:GetBodygroup(bg.id) or 0)
 			end
+		end
+
+		for i = 0, 31 do
+			local sub = src:GetSubMaterial(i) or ""
+			if sub == "null" or sub == "zcity_csgo_gloves/invisible" then sub = "" end
+			dst:SetSubMaterial(i, sub ~= "" and sub or nil)
 		end
 	end
 
 	if src.GetPlayerColor then
-		local col = src:GetPlayerColor()
-		dst.GetPlayerColor = function() return col end
+		dst.GetPlayerColor = function()
+			return IsValid(src) and src:GetPlayerColor() or vector_origin
+		end
+	end
+end
+
+local function SyncModelAppearance(src, dst, isPlayerModel)
+	if not IsValid(src) or not IsValid(dst) then return end
+
+	if BeatrunZCityAppCompat and isfunction(BeatrunZCityAppCompat.SyncTrickModelAppearance) then
+		BeatrunZCityAppCompat.SyncTrickModelAppearance(src, dst, isPlayerModel, false)
 	end
 end
 
@@ -227,16 +240,20 @@ local function BuildBodyAndArmModels(ply)
 	local mdl = ply:GetModel()
 	if not mdl or mdl == "" then mdl = "models/player/kleiner.mdl" end
 	local zcgID = ply:GetNWString("zcg_glove", "")
+	local zcgActive = BeatrunZCityAppCompat and BeatrunZCityAppCompat.IsActive() or (istable(ZCGloves) and true or false)
 
 	BodyAnimMDL = ClientsideModel(mdl, RENDERGROUP_BOTH)
 	local hasHandBones = false
 	if IsValid(BodyAnimMDL) then
-		BodyAnimMDL.GetPlayerColor = function() return ply:GetPlayerColor() end
+		BodyAnimMDL.GetPlayerColor = function()
+			return IsValid(ply) and ply:GetPlayerColor() or vector_origin
+		end
 
-		-- Exactly what Beatrun does: take over the player's own model instance, so the copy renders
-		-- with the correct skinning, materials and Z-City appearance instead of a bare duplicate.
+		-- Never share the player's model instance when ZCGloves / Big Appearance is active:
+		-- glove submaterial hiding, bone shrinking and ClearGlove on BodyAnimMDL would otherwise
+		-- leak back onto ply and leave the player's own hands invisible after the slide.
 		local cvSnatch = GetConVar("Beatrun_SnatchModel")
-		if (not cvSnatch or cvSnatch:GetBool()) and isfunction(BodyAnimMDL.SnatchModelInstance) then
+		if (not zcgActive) and (not cvSnatch or cvSnatch:GetBool()) and isfunction(BodyAnimMDL.SnatchModelInstance) then
 			pcall(BodyAnimMDL.SnatchModelInstance, BodyAnimMDL, ply)
 		end
 
@@ -244,7 +261,7 @@ local function BuildBodyAndArmModels(ply)
 		BodyAnimMDL:AddEffects(EF_BONEMERGE)
 		BodyAnimMDL:SetNoDraw(true)
 		BodyAnimMDL:SetNWEntity("ply", ply)
-		CopyModelAppearance(ply, BodyAnimMDL)
+		CopyModelAppearance(ply, BodyAnimMDL, true)
 		BodyAnimMDL:SetupBones()
 
 		hasHandBones = BodyAnimMDL:LookupBone("ValveBiped.Bip01_R_Hand") ~= nil
@@ -286,16 +303,20 @@ local function BuildBodyAndArmModels(ply)
 		armMdl = hands:GetModel()
 	end
 
+	local armUsesPlayerModel = (armMdl == mdl) and hasHandBones
 	BodyAnimMDLarm = ClientsideModel(armMdl, RENDERGROUP_BOTH)
 	if IsValid(BodyAnimMDLarm) then
+		BodyAnimMDLarm._BRZIsPlayerModel = armUsesPlayerModel
 		BodyAnimMDLarm:SetParent(BodyAnim)
 		BodyAnimMDLarm:AddEffects(EF_BONEMERGE)
 		BodyAnimMDLarm:SetNoDraw(true)
 		BodyAnimMDLarm:SetNWEntity("ply", ply)
-		if zcgID ~= "" then
+		if armUsesPlayerModel and zcgID ~= "" then
 			BodyAnimMDLarm:SetNWString("zcg_glove", zcgID)
+		else
+			BodyAnimMDLarm:SetNWString("zcg_glove", "")
 		end
-		CopyModelAppearance(armMdl == mdl and ply or hands, BodyAnimMDLarm)
+		CopyModelAppearance(armUsesPlayerModel and ply or hands, BodyAnimMDLarm, armUsesPlayerModel)
 		BodyAnimMDLarm:SetupBones()
 
 		-- When BodyAnimMDLarm is used as the SlideWeapon 0 fallback on a ValveBiped model, keep only
@@ -346,6 +367,10 @@ function BeatrunRestoreStaticPlayerModel(ply)
 
 	ply:SetNoDraw(ply._BRZHiddenNoDraw and true or false)
 	ply._BRZHiddenNoDraw = nil
+
+	if BeatrunZCityAppCompat and isfunction(BeatrunZCityAppCompat.SanitizeOrphanHiddenSlots) then
+		BeatrunZCityAppCompat.SanitizeOrphanHiddenSlots(ply, true)
+	end
 end
 
 function BodyAnimSetEase(pos)
@@ -878,11 +903,20 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDra
 	local ply = LocalPlayer()
 	if not IsBodyAnimVisible(ply) then return end
 
+	-- If the player's model changed mid-trick (class change / appearance apply), rebuild the trick
+	-- body copy so bodygroup and submaterial indices always match the active player model.
+	local plyMdl = ply:GetModel()
+	if isstring(plyMdl) and plyMdl ~= "" and IsValid(BodyAnimMDL) and BodyAnimMDL:GetModel() ~= plyMdl then
+		BuildBodyAndArmModels(ply)
+		if not IsValid(BodyAnimMDL) then return end
+	end
+
 	-- Beatrun_ZCity_SlideWeapon 0: hide animated body legs/torso, still draw weapon & right arm.
 	-- 1 (default): draw unified animated body (legs + torso + animated left arm + IK right arm) + gun.
 	local armed = BeatrunWeaponArmed(ply)
 	local hideBody = armed and cvSlideWeapon and cvSlideWeapon:GetInt() == 0
 	local useUnifiedBody = (not hideBody) and IsValid(BodyAnimMDL) and BodyAnimMDL._BRZUnifiedArms
+	local appCompat = BeatrunZCityAppCompat
 
 	-- ply has SetNoDraw(true) during the trick so refresh bones before weapon/TPIK transforms.
 	ply:SetupBones()
@@ -894,6 +928,10 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDra
 	if ignorez then cam.IgnoreZ(true) end
 
 	if useUnifiedBody then
+		-- Keep jacket/hand bodygroups (sheet, TORSO, HANDS/handsfortshirt), zcg_glove and clean
+		-- submaterials synced with ply so ZCGloves always evaluates the active jacket accurately.
+		SyncModelAppearance(ply, BodyAnimMDL, true)
+
 		-- Prepare fresh bonemerged bones from BodyAnim BEFORE drawing weapon so shoulder reach
 		-- clamping reads the exact right-shoulder bone of the animated slide body.
 		BodyAnimMDL:SetPos(BodyAnim:GetPos())
@@ -914,21 +952,37 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDra
 
 		-- Hide head/hair bones without re-calling SetupBones so right-arm TPIK stays intact.
 		ApplyHiddenHeadBoneMatrices(BodyAnimMDL)
+		if appCompat and isfunction(appCompat.SanitizeOrphanHiddenSlots) then
+			appCompat.SanitizeOrphanHiddenSlots(BodyAnimMDL, false)
+		end
 		pcall(hook.Run, "CoolPostDrawAppearance", BodyAnimMDL, ply)
+		if appCompat and isfunction(appCompat.ProtectNonFingerArmBones) then
+			appCompat.ProtectNonFingerArmBones(BodyAnimMDL)
+		end
 		BodyAnimMDL:DrawModel()
 		pcall(hook.Run, "PostDrawAppearance", BodyAnimMDL, ply)
 	else
 		-- Fallback path: Beatrun_ZCity_SlideWeapon 0 (hidden body) or non-ValveBiped model using C-hands.
 		if not hideBody and IsValid(BodyAnimMDL) then
+			SyncModelAppearance(ply, BodyAnimMDL, true)
 			BodyAnimMDL:SetPos(BodyAnim:GetPos())
 			BodyAnimMDL:SetAngles(BodyAnim:GetAngles())
 			HideHeadBones(BodyAnimMDL)
+			if appCompat and isfunction(appCompat.SanitizeOrphanHiddenSlots) then
+				appCompat.SanitizeOrphanHiddenSlots(BodyAnimMDL, false)
+			end
 			pcall(hook.Run, "CoolPostDrawAppearance", BodyAnimMDL, ply)
+			if appCompat and isfunction(appCompat.ProtectNonFingerArmBones) then
+				appCompat.ProtectNonFingerArmBones(BodyAnimMDL)
+			end
 			BodyAnimMDL:DrawModel()
 			pcall(hook.Run, "PostDrawAppearance", BodyAnimMDL, ply)
 		end
 
 		if IsValid(BodyAnimMDLarm) then
+			if BodyAnimMDLarm._BRZIsPlayerModel then
+				SyncModelAppearance(ply, BodyAnimMDLarm, true)
+			end
 			BodyAnimMDLarm:SetPos(BodyAnim:GetPos())
 			BodyAnimMDLarm:SetAngles(BodyAnim:GetAngles())
 			if isfunction(BodyAnimMDLarm.InvalidateBoneCache) then
@@ -947,7 +1001,16 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_DrawBodyAnim", function(bDra
 				BeatrunZCitySlideTPIKState = armed and "none" or "unarmed"
 			end
 
-			BodyAnimMDLarm:DrawModel()
+			if BodyAnimMDLarm._BRZIsPlayerModel and appCompat and isfunction(appCompat.RunZCGDrawHookOnly) then
+				appCompat.RunZCGDrawHookOnly(BodyAnimMDLarm, ply)
+				if isfunction(appCompat.ProtectNonFingerArmBones) then
+					appCompat.ProtectNonFingerArmBones(BodyAnimMDLarm)
+				end
+				BodyAnimMDLarm:DrawModel()
+				appCompat.RunZCGAfterHookOnly(BodyAnimMDLarm, ply)
+			else
+				BodyAnimMDLarm:DrawModel()
+			end
 		end
 	end
 

@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.4
+**Версия:** 2.21.5
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_2.21.4.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.4.zip>
+1. Скачать `beatrun_zcity_2.21.5.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.5.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.4`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.5`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -92,6 +92,17 @@ if IsValid(ply.FakeRagdoll) or BeatrunIsThirdPerson(ply) then return end
 играет слайд или страховочный перекат**, в том числе в третьем лице. Когда трюк заканчивается,
 камера плавно (лерп) возвращается на обычную камеру Z-City — то есть переключение происходит
 ровно на момент выполнения трюка, а не постоянно.
+
+### 2.21.5 — совместимость с Z-City Big Appearance и перчатками (`zcity_csgo_gloves`), фикс пропадания рук с куртками
+
+Исправлены причины, из-за которых при совместной работе `beatrun_zcity` и `z_city_big_appearance1` (`Appearance Mod` + `zcity_csgo_gloves`) с перчатками и определёнными куртками могли пропадать руки или схлопываться предплечья:
+- Новый клиентский модуль совместимости `lua/beatrun_zcity/cl/01_bigappearance_compat.lua`:
+  - **Чистое копирование субматериалов (`0..31`):** `CopyModelAppearance` больше никогда не копирует скрывающий материал перчаток `ZCG.HideMaterial()` (`"null"` / `"zcity_csgo_gloves/invisible"`) с игрока на `BodyAnimMDL` и `BodyAnimMDLarm` — вместо него восстанавливается оригинальный пред-скрытый материал из `ZCGloves.States` (при этом заглавный `"NULL"` от брони Z-City `ent_zcity_equipment_base` сохраняется нетронутым). Исправлено пропадание рук в первый кадр слайда (`notReady`), на короткорукавных куртках (`sheet_tshirt_m/f`, `tanktop_f`, `male_standart_tshirt`), на куртках с общим материалом (`SlotShared`) и в режиме `Beatrun_ZCity_SlideWeapon 0`.
+  - **Покадровая синхронизация внешности и курток:** `BodyAnimMDL` и `BodyAnimMDLarm` каждый кадр синхронизируют `skin`, бодигруппы (`sheet`, `TORSO`, `HANDS` включая `handsfortshirt`), `zcg_glove`, `organism` и чистые субматериалы (при смене куртки/перчатки старые скрытия сбрасываются мгновенно, а при смене модели игрока модель трюка пересобирается).
+  - **Защита от осиротевших `"null"` слотов:** неинвазивная обёртка над `CoolPostDrawAppearance["zcg_gloves"]` (с сохранением приоритета `ZCGloves.HookOrder.draw` для стандартного `hook`, ULib и Srlion) и санитизация в `BeatrunRestoreStaticPlayerModel` немедленно возвращают слот рук, если `"null"` остался без активного `state.hide`/`state.more` (или если куртка/перчатки не должны скрывать материал рук).
+  - **Защита helper-костей предплечья на моделях Appearance Mod (`models/slav/...`):** когда `ZCGloves` вызывает `shrinkHands` на не-футболочной куртке (`SlotShared` / непрочитанный меш / `zcg_whole_hands 0`), не-пальцевые helper-кости под `L/R_Hand` восстанавливаются прямо перед `DrawModel()` с сохранением маркера для `growHands` в `PostDrawAppearance`, чтобы предплечья не схлопывались.
+  - **Изоляция `SnatchModelInstance` и поддержка `SlideWeapon 0`:** при активном `ZCGloves` отключается `SnatchModelInstance` (исключена утечка `"null"` и костных правок с `BodyAnimMDL` на модель игрока), а для `BodyAnimMDLarm` при `Beatrun_ZCity_SlideWeapon 0` запускаются только хуки перчаток `zcg_gloves` без бронежилетов в воздухе.
+- В `beatrun_zcity_debug` добавлена строка диагностики `big appearance/ZCG`.
 
 ### 2.21.4 — исключены все melee SWEP-ы из подката с оружием
 

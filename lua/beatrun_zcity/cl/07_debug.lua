@@ -44,6 +44,7 @@ local function Report()
 		print("viewmodel:          valid=false (Z-City weapons draw as world models at the hand)")
 	end
 	print("Z-City render:      DrawPlayerRagdoll=" .. Str(type(DrawPlayerRagdoll)) .. " RenderOverride=" .. Str(type(ply.RenderOverride)))
+	print("big appearance/ZCG: " .. (BeatrunZCityAppCompat and isfunction(BeatrunZCityAppCompat.GetDebugSummary) and BeatrunZCityAppCompat.GetDebugSummary(ply) or "n/a"))
 	print("slide weapon draw:  " .. Str(BeatrunZCitySlideWeaponState) .. " | TPIK=" .. Str(BeatrunZCitySlideTPIKState) .. " | worldModel=" .. tostring(IsValid(wpn) and IsValid(wpn.worldModel)) .. " | unified=" .. tostring(IsValid(BodyAnimMDL) and BodyAnimMDL._BRZUnifiedArms))
 	print("slide muzzle sync:  pos=" .. Str(ply._BRZSlideMuzzlePos) .. " dir=" .. Str(ply._BRZSlideMuzzleDir))
 	print("slide yaw limit:    +/-" .. tostring(isfunction(BeatrunGetSlideYawLimit) and BeatrunGetSlideYawLimit() or 90) .. " deg")
