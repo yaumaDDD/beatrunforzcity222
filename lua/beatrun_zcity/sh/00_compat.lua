@@ -20,7 +20,7 @@ CreateClientConVar("Beatrun_ZCity_SlideWeapon", "1", true, false, "Armed slide: 
 CreateConVar("Beatrun_ZCity_SlideNoDamage", "1", REP, "A slide protects from Z-City impact damage and injuries", 0, 1)
 CreateConVar("Beatrun_ZCity_RollMinSpeed", "250", REP, "Minimum fall speed at which a timed roll activates", 0, 2000)
 CreateConVar("Beatrun_ZCity_RollMinHeight", "70", REP, "Minimum fall height (units) a timed roll is allowed to play on: a hop or a step down never turns into a roll", 0, 400)
-CreateConVar("Beatrun_ZCity_RollBigHeight", "350", REP, "Fall height (units) from which a real roll plays instead of the knee landing, and the protection window grows", 80, 1200)
+CreateConVar("Beatrun_ZCity_RollBigHeight", "750", REP, "Fall height (units) from which a real roll plays instead of the knee landing (and 2x this for the low roll)", 100, 2000)
 
 -- Ledge climb & hang (Beatrun climb.lua, ported to this addon's scheme)
 CreateConVar("Beatrun_ZCity_ClimbEnabled", "1", REP, "Enable Beatrun ledge climb / hang in Z-City", 0, 1)
