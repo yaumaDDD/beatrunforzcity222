@@ -887,6 +887,25 @@ local function EnsureSlideMuzzleAttOverride(wpn)
 	end
 end
 
+-- Z-City's barrel smoke (SWEP.particleEffect, the "smoke_trail_tfa" system) is ONE long-lived particle
+-- system: its control point is written only from SWEP:MuzzleEffect, which runs inside the weapon's own
+-- Think. During a slide the weapon is drawn by us, not by Z-City, so that smoke kept sitting wherever
+-- the standing gun had last put it - it "flew off" the barrel. Here we keep it glued to the drawn barrel
+-- for as long as the animation plays: the per-frame call simply stops when the slide ends and Z-City
+-- takes its own system back (its own lifetime, 2-4 s, is untouched).
+local function PinSlideMuzzleSmoke(wpn, muzzlePos, muzzleAng)
+	if not IsValid(wpn) then return end
+	local smoke = wpn.particleEffect
+	if not IsValid(smoke) or not isfunction(smoke.SetControlPoint) then return end
+	if not isvector(muzzlePos) then return end
+
+	pcall(smoke.SetControlPoint, smoke, 0, muzzlePos)
+	if isangle(muzzleAng) then
+		-- direction control point: keeps the trail pointing out of the barrel instead of along the old aim
+		pcall(smoke.SetControlPoint, smoke, 1, muzzlePos + muzzleAng:Forward() * 2)
+	end
+end
+
 -- Draws the local player's active Z-City weapon directly in our render pass. While ply has
 -- SetNoDraw(true) and view.drawviewer = false, ply.RenderOverride never executes, so Z-City's
 -- DrawPlayerRagdoll -> hg.RenderWeapons never gets a chance to draw the worldModel.
@@ -951,6 +970,7 @@ local function DrawSlideZCityWeapon(ply, bodyEnt)
 		local muzzlePos, muzzleAng = ComputeSlideMuzzle(wpn, wm, pos, ang, ply)
 		SyncSlideMuzzleAim(ply, wpn, pos, ang, muzzlePos, muzzleAng)
 		EnsureSlideMuzzleAttOverride(wpn)
+		PinSlideMuzzleSmoke(wpn, muzzlePos, muzzleAng)
 
 		BeatrunZCitySlideWeaponState = "gun ok (1H right)"
 		return true, wpn, handPos, handAng
