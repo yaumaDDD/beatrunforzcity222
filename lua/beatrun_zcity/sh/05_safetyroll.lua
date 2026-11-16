@@ -277,25 +277,22 @@ end, "HOOK_LOW")
 
 -- ---------------------------------------------------------------------------
 -- One place that maps a fall height to a trick, shared by the client and the server so the animation
--- can never disagree with the movement. The table is FIXED (2.21.25):
+-- can never disagree with the movement. The table is FIXED (2.21.26):
 --   0 = no trick, plain Z-City landing     below 290
 --   1 = knee landing   "land" / "landgun"  290 .. 350, inclusive
---   0 = no trick, Z-City lands you         351 .. 449  (between the two tricks: nothing)
---   2 = the one roll   "meroll" / ...      450 .. 750
+--   2 = the one roll   "meroll" / ...      351 .. 750
 --   0 = no trick, Z-City fall injuries     above 750 - nothing saves that fall
 --
 -- It is deliberately NOT read from convars any more. A saved config, an older copy of the addon or an
 -- old menu could leave RollMinHeight / RollBigHeight sitting at values from another version (your log
 -- showed 70 / 260), and then the same fall played a different animation depending on the machine - the
 -- exact complaint this addon had to stop. Height alone decides now, on every install, always.
-local KNEE_HEIGHT, KNEE_MAX, ROLL_HEIGHT, MAX_HEIGHT = 290, 350, 450, 750
+local KNEE_HEIGHT, KNEE_MAX, MAX_HEIGHT = 290, 350, 750
 
 -- Does a trick exist for this height at all? Two bands, with a deliberate gap between them.
 local function HeightHasTrick(height)
 	height = height or 0
-	if height >= KNEE_HEIGHT and height <= KNEE_MAX then return true end
-	if height >= ROLL_HEIGHT and height <= MAX_HEIGHT then return true end
-	return false
+	return height >= KNEE_HEIGHT and height <= MAX_HEIGHT
 end
 
 function BeatrunRollVariantForHeight(fallHeight)
@@ -304,11 +301,11 @@ function BeatrunRollVariantForHeight(fallHeight)
 	local variant = 0
 	if fallHeight > MAX_HEIGHT then
 		variant = 0                        -- too far for a trick: Z-City owns that landing completely
-	elseif fallHeight >= ROLL_HEIGHT then
-		variant = 2
-	elseif fallHeight >= KNEE_HEIGHT and fallHeight <= KNEE_MAX then
+	elseif fallHeight > KNEE_MAX then
+		variant = 2                        -- everything above the knee landing is the roll
+	elseif fallHeight >= KNEE_HEIGHT then
 		variant = 1
-	end                                -- 351 .. 449 falls in the gap: no trick
+	end
 
 	return variant, variant == 2, false, KNEE_MAX
 end
@@ -328,7 +325,7 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.25"
+local ADDON_VERSION = "2.21.26"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
@@ -364,6 +361,15 @@ end
 
 local function TrySafetyRoll(ply, water, floater, speed)
 	if not IsValid(ply) or not ply:IsPlayer() then return end
+
+	-- 2.21.26: THE DECISION IS THE SERVER'S ALONE. This function also ran on the client (prediction plus
+	-- local landing sounds), and it wrote its own SafetyRollTime with the CLIENT clock. When the server's
+	-- authoritative value arrived a moment later the number changed, the client read that as a fresh
+	-- landing and replayed the pose - exactly the "knee landing plays twice" in the log (start at 133.75,
+	-- then again at 134.50 as soon as the pose had ended). The client only plays what the server sends
+	-- now, and the server already emits the landing sounds.
+	if CLIENT then return end
+
 	if water or floater then Decline(ply, "landed in water / on a floater") return end
 	if not cvRollEnabled:GetBool() then Decline(ply, "the trick is disabled in the settings") return end
 	if not BeatrunCanSlideOrRoll(ply) then Decline(ply, "you are not in a rollable state (ragdoll, vehicle, broken legs)") return end
@@ -413,17 +419,9 @@ local function TrySafetyRoll(ply, water, floater, speed)
 		return
 	end
 
-	-- The gap between the knee landing and the roll: this fall is settled by Z-City alone.
-	if fallHeight > KNEE_MAX and fallHeight < ROLL_HEIGHT then
-		Decline(ply, string.format("a %.0f unit fall is between the knee landing (up to %d) and the roll (from %d)", fallHeight, KNEE_MAX, ROLL_HEIGHT))
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - in the gap %d..%d, Z-City lands you", fallHeight, speed, KNEE_MAX + 1, ROLL_HEIGHT - 1))
-		end
-		return
-	end
-
 	-- Big fall = the heavy variant: longer roll, crouched pose, wider protection window, more stamina.
-	local bigFall = fallHeight >= ROLL_HEIGHT
+	-- Everything above the knee landing is the roll, so this is also the knee/roll boundary.
+	local bigFall = fallHeight > KNEE_MAX
 
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
 		print(string.format("[Beatrun Z-City] landing speed %.0f, fall height %.0f (%s) - roll accepted",
@@ -476,9 +474,9 @@ local function TrySafetyRoll(ply, water, floater, speed)
 
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
 		local names = { [0] = "nothing", [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
-		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %d, knees %d..%d, nothing %d..%d, roll %d..%d, nothing > %d]",
+		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %d, knees %d..%d, roll %d..%d, nothing > %d]",
 			fallHeight, variant, names[variant] or "?", KNEE_HEIGHT, KNEE_HEIGHT, KNEE_MAX,
-			KNEE_MAX + 1, ROLL_HEIGHT - 1, ROLL_HEIGHT, MAX_HEIGHT, MAX_HEIGHT))
+			KNEE_MAX + 1, MAX_HEIGHT, MAX_HEIGHT))
 	end
 
 	-- How long the trick owns the player: a drop from a roof rolls noticeably longer than a fence hop.
@@ -498,7 +496,7 @@ local function TrySafetyRoll(ply, water, floater, speed)
 		ply:SetSafetyRollTime(CT + rollSeconds)
 
 		-- The heavier the fall, the less of it is turned into a forward sprint - you absorb, you don't launch.
-		ply._BRZRollSlowFactor = math.Clamp(1 - (fallHeight - ROLL_HEIGHT) / 2600, 0.62, 1)
+		ply._BRZRollSlowFactor = math.Clamp(1 - (fallHeight - KNEE_MAX) / 2600, 0.62, 1)
 	end
 
 	local isLandInPlace = not useRoll
@@ -804,7 +802,7 @@ end
 -- 2.21.21: one line at start-up with the numbers this copy actually runs with. If a saved config or an
 -- old server.cfg pins a stale value, it shows up here instead of silently turning every fall into a roll.
 timer.Simple(1, function()
-	print(string.format("[Beatrun Z-City %s] landing table (fixed): knees %d..%d, no trick %d..%d, roll %d..%d, above %d no trick, min impact %.0f",
-		ADDON_VERSION, KNEE_HEIGHT, KNEE_MAX, KNEE_MAX + 1, ROLL_HEIGHT - 1, ROLL_HEIGHT, MAX_HEIGHT, MAX_HEIGHT,
+	print(string.format("[Beatrun Z-City %s] landing table (fixed): knees %d..%d, roll %d..%d, above %d no trick, min impact %.0f",
+		ADDON_VERSION, KNEE_HEIGHT, KNEE_MAX, KNEE_MAX + 1, MAX_HEIGHT, MAX_HEIGHT,
 		cvRollMinSpeed and cvRollMinSpeed:GetFloat() or 250))
 end)
