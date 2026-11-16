@@ -7,6 +7,9 @@ local VARS = {
 	{ kind = "Bool", key = "BRZ_Sliding", name = "Sliding", default = false },
 	{ kind = "Bool", key = "BRZ_SlidingSlippery", name = "SlidingSlippery", default = false },
 	{ kind = "Bool", key = "BRZ_RollLoss", name = "RollLoss", default = false },
+	-- true = this landing is the in-place knee landing ("land"), false = a real roll that carries you
+	-- forward. A bool is needed because comparing two Angle objects never matches them.
+	{ kind = "Bool", key = "BRZ_RollLand", name = "RollLand", default = false },
 
 	{ kind = "Float", key = "BRZ_SlidingTime", name = "SlidingTime", default = 0 },
 	{ kind = "Float", key = "BRZ_SlidingDelay", name = "SlidingDelay", default = 0 },
@@ -83,6 +86,7 @@ function BeatrunResetSlideRollState(ply)
 	ply:SetSliding(false)
 	ply:SetSlidingSlippery(false)
 	ply:SetRollLoss(false)
+	ply:SetRollLand(false)
 	ply:SetSlidingTime(0)
 	ply:SetSlidingDelay(0)
 	ply:SetSlidingVel(0)

@@ -4,7 +4,7 @@
 -- the server) and the animation goes through StartBodyAnim like the slide and the safety roll.
 --
 -- Flow (2.21.16, one climb like Beatrun - you just jump into the wall):
---   * jump at a wall, or fly into one while falling  -> hands hit the ledge (hanghardstart / ...2)
+--   * jump at a wall                                -> hands hit the ledge (hanghardstart / ...2)
 --   * you hang for a moment                          -> the pull-up starts by itself (hangheaveup)
 --   * low ledge (no air under it)                    -> same two animations, body hangs where it is
 --   * while hanging: Ctrl / S drops you, Jump pushes you off the wall (the safety roll gets armed)
@@ -183,7 +183,7 @@ end
 -- ---------------------------------------------------------------------------
 local StartHeave
 
-local function StartGrab(ply, mv, ledge, CT, fromGround)
+local function StartGrab(ply, mv, ledge, CT)
 	local grabSpeed = math.max(0, -mv:GetVelocity().z)
 	-- Beatrun: a fall faster than 200 picks the hard catch (climbhard2 -> hanghardstart2)
 	local hard = grabSpeed > 200
@@ -201,12 +201,12 @@ local function StartGrab(ply, mv, ledge, CT, fromGround)
 	-- Beatrun has ONE climb, not two paths: the hands hit the ledge (hanghardstart / hanghardstart2),
 	-- you hang for a moment and the pull-up follows (hangheaveup). A ledge low enough that there is no
 	-- air below it keeps the same two animations - the body hangs where it is, pressed to the wall.
-	local lowLedge = fromGround and ledge.height <= cvLowHeight:GetFloat()
+	local lowLedge = ledge.height <= cvLowHeight:GetFloat()
 
 	if not isvector(ledge.hangPos) then return end
 
-	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f, %s -> hang (hanghardstart)", ledge.height,
-		ledge.dist, grabSpeed, fromGround and "from the ground" or "caught in the air")
+	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f, jumped at the wall -> hang (hanghardstart)",
+		ledge.height, ledge.dist, grabSpeed)
 
 	ply._BRZClimbLow = lowLedge and true or false
 	ply._BRZClimbHangPos = ledge.hangPos
@@ -475,16 +475,18 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 
 	local jumpWindow = (ply._BRZClimbJumpWindow or 0) > CT
 
-	-- 2.21.9: the only way in from the ground is jumping at the wall - no sprint+W combos, no extra
-	-- keys. The grab itself happens a few ticks later, in the air, exactly like Beatrun.
+	-- 2.21.9: the only way in is jumping at the wall - no sprint+W combos, no extra keys. The grab
+	-- itself happens a few ticks later, in the air, exactly like Beatrun.
 	if onground then
 		if mv:KeyPressed(IN_JUMP) then
-			ply._BRZClimbJumpWindow = CT + 0.45
+			ply._BRZClimbJumpWindow = CT + 0.5
 		end
 		return
-	elseif vel.z > 150 and not jumpWindow then
-		return -- still rising fast, the hands are not there yet
 	end
+
+	-- 2.21.17: jump into the wall and nothing else. Catching a ledge while already flying through the
+	-- air is gone - that grabbed ledges you never jumped at (walls you merely fell past).
+	if not jumpWindow then return end
 
 	local eyeang = ply:EyeAngles()
 	local ledge = FindLedge(ply, mv, eyeang)
@@ -509,7 +511,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cm
 
 	ply._BRZClimbJumpWindow = nil
 
-	StartGrab(ply, mv, ledge, CT, jumpWindow)
+	StartGrab(ply, mv, ledge, CT)
 end)
 
 -- Reset on death/spawn so a ragdoll or respawn never leaves a player stuck mid-climb

@@ -14,8 +14,6 @@ local cvRollMinHeight = GetConVar("Beatrun_ZCity_RollMinHeight")
 local cvRollBigHeight = GetConVar("Beatrun_ZCity_RollBigHeight")
 local cvRollDebugLog = GetConVar("Beatrun_RollDebugLog")
 
-local landang = Angle(0, 0, 0)
-
 local HANDS_CLASSES = { "weapon_hands_sh", "weapon_hands", "gmod_hands" }
 
 local function FindHandsWeapon(ply)
@@ -163,6 +161,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 		ply._BRZRollSlowFactor = nil
 		ply._BRZRollSeconds = nil
 		ply._BRZRollVariant = nil
+		if ply.GetRollLand and ply:GetRollLand() then ply:SetRollLand(false) end
 	end
 
 	if onground and not isArming and CT >= ply:GetSafetyRollTime() then
@@ -173,12 +172,15 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 
 	if CT < ply:GetSafetyRollTime() then
 		local ang = ply:GetSafetyRollAng()
-		mv:SetSideSpeed(0)
-		mv:SetForwardSpeed(0)
 		mv:AddKey(IN_DUCK)
 
+		-- 2.21.17: an Angle object never compares equal to another one, so "is this the in-place knee
+		-- landing?" has to come from its own replicated flag. It used to fall through to the roll branch
+		-- and pushed the player towards world +X on every knee landing.
+		local landInPlace = isfunction(ply.GetRollLand) and ply:GetRollLand() or false
+
 		local rollSpeed = 0
-		if ang ~= landang then
+		if not landInPlace then
 			local vel = mv:GetVelocity()
 			vel.x = 0
 			vel.y = 0
@@ -197,19 +199,39 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 				rollSpeed = rollSpeed * ply._BRZRollSlowFactor
 			end
 
+			local dir = ang:Forward()
+			dir.z = 0
+			if dir:LengthSqr() > 0.001 then dir:Normalize() else dir = Vector(0, 0, 0) end
+
+			-- 2.21.17: the roll has to carry the body forward, like Beatrun's does. Z-City's inertia
+			-- (homigrad/movement/sh_inertia.lua) rebuilds the movement wish from ply.MovementInertia in
+			-- its own SetupMove, and our hook runs after it - zeroing the wish speeds here is exactly
+			-- what kept the roll in place. So the roll direction is handed back as the movement wish and
+			-- the velocity is set as well, for servers whose inertia is off.
+			local viewAng = Angle(0, ply:EyeAngles().y, 0)
+			local wishFwd = dir:Dot(viewAng:Forward()) * rollSpeed
+			local wishSide = dir:Dot(viewAng:Right()) * rollSpeed
+
+			mv:SetForwardSpeed(wishFwd)
+			mv:SetSideSpeed(wishSide)
 			mv:SetMaxSpeed(rollSpeed)
 			mv:SetMaxClientSpeed(rollSpeed)
 			ply:SetMaxSpeed(math.max(100, rollSpeed))
-			mv:SetVelocity(ang:Forward() * rollSpeed + vel)
+			mv:SetVelocity(dir * rollSpeed + vel)
+
+			ply.MovementInertia = dir * rollSpeed
+			ply.CurrentSpeed = rollSpeed
 		else
+			-- knee landing: you drop onto the knee and stop dead, exactly like Beatrun's "land"
+			mv:SetSideSpeed(0)
+			mv:SetForwardSpeed(0)
 			local vel = mv:GetVelocity()
 			vel.x = 0
 			vel.y = 0
 			mv:SetVelocity(vel)
+			ply.MovementInertia = mv:GetVelocity()
+			ply.CurrentSpeed = 0
 		end
-
-		ply.MovementInertia = mv:GetVelocity()
-		ply.CurrentSpeed = rollSpeed
 	end
 end, "HOOK_LOW")
 
@@ -340,14 +362,15 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	if useRoll then rollSeconds = math.min(rollSeconds, 1.9) end
 	ply._BRZRollSeconds = rollSeconds
 
+	ply:SetSafetyRollAng(ang)
+	if isfunction(ply.SetRollLand) then ply:SetRollLand(not useRoll) end
+
 	if not useRoll then
 		-- Knee landing (Mirror's Edge "land" pose, like Beatrun's in-place landing): you drop onto one
-		-- knee, you do not launch forward.
-		ply:SetSafetyRollAng(landang)
+		-- knee, you do not launch forward. You still face where you were looking.
 		ply:SetSafetyRollTime(CT + math.Clamp(rollSeconds, 0.6, 0.85))
 		ply._BRZRollSlowFactor = nil
 	else
-		ply:SetSafetyRollAng(ang)
 		ply:SetSafetyRollTime(CT + rollSeconds)
 
 		-- The heavier the fall, the less of it is turned into a forward sprint - you absorb, you don't launch.
