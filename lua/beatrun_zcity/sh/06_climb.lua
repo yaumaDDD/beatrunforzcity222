@@ -3,11 +3,11 @@
 -- no view/angle lock. The origin is driven inside SetupMove (predicted on the client and repeated on
 -- the server) and the animation goes through StartBodyAnim like the slide and the safety roll.
 --
--- Flow (2.21.9: no extra keys - you just jump into the wall):
---   * jump at a wall, or fly into one while falling  -> grab
---   * low ledge (waist/chest height)                 -> immediate pull-up onto it (vaultonto)
---   * high ledge                                     -> hang, then the pull-up starts by itself (hangheaveup)
---   * while hanging: Ctrl drops you, Jump pushes you off the wall (the safety roll gets armed)
+-- Flow (2.21.16, one climb like Beatrun - you just jump into the wall):
+--   * jump at a wall, or fly into one while falling  -> hands hit the ledge (hanghardstart / ...2)
+--   * you hang for a moment                          -> the pull-up starts by itself (hangheaveup)
+--   * low ledge (no air under it)                    -> same two animations, body hangs where it is
+--   * while hanging: Ctrl / S drops you, Jump pushes you off the wall (the safety roll gets armed)
 
 local cvEnabled = GetConVar("Beatrun_ZCity_ClimbEnabled")
 local cvHangHeight = GetConVar("Beatrun_ZCity_ClimbHangHeight")
@@ -20,7 +20,8 @@ local cvCooldown = GetConVar("Beatrun_ZCity_ClimbCooldown")
 local cvDebugLog = GetConVar("Beatrun_RollDebugLog")
 
 local STATE_NONE, STATE_HANG, STATE_HEAVE = 0, 1, 2
-local LOW_HEAVE_TIME = 0.45
+local LOW_HEAVE_TIME = 0.5   -- low ledge: shorter pull-up, like Beatrun's 0.857 s heave scaled down
+local LOW_HANG_DELAY = 0.18
 
 local function Log(fmt, ...)
 	if cvDebugLog and cvDebugLog:GetBool() then
@@ -61,7 +62,7 @@ local wallTable = {}
 local ledgeHull = {}
 local standTable = {}
 local floorTable = {}
-local hangTable = {}
+local groundTable = {}
 
 local function ProbeLedge(ply, origin, hit, eyeang, reach, mins, maxs)
 	local normal = hit.HitNormal
@@ -116,19 +117,25 @@ local function ProbeLedge(ply, origin, hit, eyeang, reach, mins, maxs)
 	floorTable.mask = MASK_PLAYERSOLID
 	if not util.TraceLine(floorTable).Hit then return end
 
-	-- the hanging body: hands on the ledge edge, feet in the air
-	local radius = math.max(maxs.x, maxs.y) + 1.5
-	local hangPos = Vector(hit.HitPos.x, hit.HitPos.y, 0) + normal * radius
-	hangPos.z = topZ - cvHangHeight:GetFloat()
+	-- The hanging body, positioned exactly like Beatrun's ClimbingCheck: the origin sits 0.533 units
+	-- INTO the wall and ClimbHangHeight (77) below the top of the ledge. That is what puts the hands
+	-- on the edge - pulling the body half a hull away from the wall made the pose look detached.
+	local hangZ = topZ - cvHangHeight:GetFloat()
 
-	hangTable.start = hangPos
-	hangTable.endpos = hangPos
-	hangTable.mins = mins
-	hangTable.maxs = maxs
-	hangTable.filter = ply
-	hangTable.mask = MASK_PLAYERSOLID
-	-- No free air below the ledge (the floor is right there) -> no hang, just vault up onto it
-	if util.TraceHull(hangTable).Hit then hangPos = nil end
+	-- A short ledge standing on the floor has no air under it: hanging 77 below the top would push the
+	-- legs into the ground. One line straight down in front of the wall tells us where the floor is and
+	-- the body hangs with its feet on it instead. Over a real drop there is no hit and Beatrun's own
+	-- hang height is used untouched.
+	groundTable.start = Vector(hit.HitPos.x, hit.HitPos.y, topZ) - wallang:Forward()
+	groundTable.endpos = groundTable.start - Vector(0, 0, cvHangHeight:GetFloat() + 20)
+	groundTable.filter = ply
+	groundTable.mask = MASK_PLAYERSOLID
+	local ground = util.TraceLine(groundTable)
+	if ground.Hit then
+		hangZ = math.max(hangZ, ground.HitPos.z)
+	end
+
+	local hangPos = Vector(hit.HitPos.x, hit.HitPos.y, hangZ) + wallang:Forward() * 0.533
 
 	return {
 		wallang = wallang,
@@ -178,7 +185,8 @@ local StartHeave
 
 local function StartGrab(ply, mv, ledge, CT, fromGround)
 	local grabSpeed = math.max(0, -mv:GetVelocity().z)
-	local hard = grabSpeed > 420
+	-- Beatrun: a fall faster than 200 picks the hard catch (climbhard2 -> hanghardstart2)
+	local hard = grabSpeed > 200
 	local origin = mv:GetOrigin()
 
 	ply._BRZClimbAng = ledge.wallang
@@ -190,38 +198,17 @@ local function StartGrab(ply, mv, ledge, CT, fromGround)
 		BeatrunZCityHolsterForTrick(ply)
 	end
 
-	-- Two different climbs by height (2.21.8), exactly like the rig's two animations:
-	--   low ledge (ClimbLowHeight and below) -> vault onto the wall        (vaultonto)
-	--   higher ledge                         -> hang, then pull up on W   (hangheaveup)
-	-- No room to hang below the ledge (a floor right under it) also falls back to the vault.
-	-- From the ground (jump or sprint into the wall) the height picks the animation: a low ledge is
-	-- vaulted, a higher one is hung on. Catching a ledge while falling always goes through the hang,
-	-- because hanging is what that looks like.
-	local lowLedge
-	if fromGround then
-		lowLedge = ledge.height <= cvLowHeight:GetFloat() or not isvector(ledge.hangPos)
-	else
-		lowLedge = not isvector(ledge.hangPos)
-	end
+	-- Beatrun has ONE climb, not two paths: the hands hit the ledge (hanghardstart / hanghardstart2),
+	-- you hang for a moment and the pull-up follows (hangheaveup). A ledge low enough that there is no
+	-- air below it keeps the same two animations - the body hangs where it is, pressed to the wall.
+	local lowLedge = fromGround and ledge.height <= cvLowHeight:GetFloat()
 
-	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f, %s -> %s", ledge.height, ledge.dist, grabSpeed,
-		fromGround and "from the ground" or "caught in the air",
-		lowLedge and "vault (vaultonto)" or "hang (hangheaveup)")
+	if not isvector(ledge.hangPos) then return end
 
-	if lowLedge then
-		ply._BRZClimbLow = true
-		ply._BRZClimbHangPos = Vector(origin)
+	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f, %s -> hang (hanghardstart)", ledge.height,
+		ledge.dist, grabSpeed, fromGround and "from the ground" or "caught in the air")
 
-		if SERVER then
-			ply:EmitSound("Cloth.MovementRun")
-			ply:EmitSound("WallrunRelease.Concrete")
-		end
-
-		StartHeave(ply, mv, CT, true)
-		return
-	end
-
-	ply._BRZClimbLow = false
+	ply._BRZClimbLow = lowLedge and true or false
 	ply._BRZClimbHangPos = ledge.hangPos
 	ply:SetBRZClimbState(STATE_HANG)
 
@@ -393,7 +380,10 @@ local function UpdateHang(ply, mv, CT)
 			return
 		end
 
-		if held > cvHoldDelay:GetFloat() then
+		local holdDelay = cvHoldDelay:GetFloat()
+		if ply._BRZClimbLow then holdDelay = math.min(holdDelay, LOW_HANG_DELAY) end
+
+		if held > holdDelay then
 			if mv:KeyPressed(IN_JUMP) then
 				ReleaseGrab(ply, mv, CT, true)
 				return
@@ -401,7 +391,7 @@ local function UpdateHang(ply, mv, CT)
 
 			-- 2.21.9: the pull-up no longer waits for W. After a short hang the climb finishes by
 			-- itself, so "jump at the wall" is the whole input and the animation carries you up.
-			StartHeave(ply, mv, CT, false)
+			StartHeave(ply, mv, CT, ply._BRZClimbLow and true or false)
 			return
 		end
 	end

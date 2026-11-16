@@ -23,9 +23,11 @@ local function IsHangSequence(name)
 	return isstring(name) and GRAB_ANIMS[name] == true
 end
 
+-- Beatrun's climb state sets exactly these view limits (BodyLimitX 80 / BodyLimitY 170), the same
+-- numbers its own sh/climb.lua pushes while the player hangs.
 local function ClimbClampLimits()
-	BodyLimitX = 70
-	BodyLimitY = 110
+	BodyLimitX = 80
+	BodyLimitY = 170
 end
 
 -- Jumped onto a ledge: play the grab animation, then fall into the hang pose
@@ -60,14 +62,16 @@ function BeatrunZCityClimbAnimGrab(ang, hard)
 	})
 end
 
--- Pulling up over the edge. low = the ledge was at waist/chest height and there was no hang at all,
--- that is a vault onto the wall (vaultonto), a real hang uses the hangheaveup pull-up.
+-- Pulling up over the edge. Beatrun has a single pull-up sequence (its "climbheave" event maps to
+-- hangheaveup); low = short ledge with no air under it, which only makes the heave shorter.
 function BeatrunZCityClimbAnimHeave(ang, low)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
 
-	local dur = low and 0.45 or math.max(0.2, cvHeaveTime and cvHeaveTime:GetFloat() or 0.55)
-	local seqName = low and "vaultonto" or "hangheaveup"
+	-- Beatrun's climb has exactly one pull-up sequence for both cases (its "climbheave" event maps to
+	-- hangheaveup); a low ledge only makes it shorter.
+	local dur = low and 0.5 or math.max(0.2, cvHeaveTime and cvHeaveTime:GetFloat() or 0.85)
+	local seqName = "hangheaveup"
 
 	-- Client prediction and the server trigger can both ask for the pull-up - never restart it
 	if climbAnimState == 2 and IsValid(BodyAnim) and BodyAnimString == seqName and BodyAnimCycle < 0.5 then
@@ -107,7 +111,7 @@ end
 
 function BeatrunZCityClimbAnimEnd(landed)
 	climbAnimState = 0
-	if IsValid(BodyAnim) and (IsHangSequence(BodyAnimString) or BodyAnimString == "hangheaveup" or BodyAnimString == "vaultonto") then
+	if IsValid(BodyAnim) and (IsHangSequence(BodyAnimString) or BodyAnimString == "hangheaveup") then
 		RemoveBodyAnim(landed and true or false)
 	end
 end

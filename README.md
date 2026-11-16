@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.15
+**Версия:** 2.21.16
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_2.21.15.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/b80477fd-beatrunforzcity222/beatrun_zcity_2.21.15.zip>
+1. Скачать `beatrun_zcity_2.21.16.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/b80477fd-beatrunforzcity222/beatrun_zcity_2.21.16.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.15`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.16`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -37,6 +37,45 @@
 ---
 
 ---
+
+---
+
+## Что нового в 2.21.16
+
+### Залазы: тело снова прижато к стене, анимации как в Beatrun
+
+«Сломанные» анимации залаза были не в самих секвенциях, а в позиции тела. Мы ставили висящего
+игрока в `normal * (maxs.x + 1.5)` от стены — на полтора корпуса от кромки, поэтому вис выглядел как
+полёт в воздухе перед стеной, а руки не попадали на уступ. Теперь позиция считается ровно как в
+Beatrun (`ClimbingCheck`):
+
+```lua
+hangPos = hit.HitPos + wallang:Forward() * 0.533   -- 0.533 юнита В стену
+hangZ   = topZ - Beatrun_ZCity_ClimbHangHeight      -- 77 юнитов ниже кромки
+```
+
+Тело прижато к стене, руки на кромке, высота виса — как в Beatrun (`ClimbHangHeight` 74 → **77**,
+`ClimbHeaveTime` 0.55 → **0.85**).
+
+### Один залаз вместо двух
+
+Раньше у нас было две ветки: «низкий уступ ⇒ сразу `vaultonto`», «высокий ⇒ вис + `hangheaveup`». В
+Beatrun залаз один — руки цепляются (`hanghardstart` / `hanghardstart2`), короткий вис, подтягивание
+(`hangheaveup`). Вторая ветка убрана, поэтому `vaultonto` в залазе больше не участвует.
+
+* зацеп на падении быстрее 200 — жёсткий вариант `hanghardstart2` (как Beatrun `climbhard2`);
+* обычный зацеп — `hanghardstart`;
+* низкий уступ (под ним нет воздуха) — те же две анимации, но висишь где зацепился (ступни на полу,
+  а не на 77 юнитов в земле) и подтягивание короче: 0.5 с вместо 0.85;
+* лимиты обзора в висе выставлены как в Beatrun: `BodyLimitX 80`, `BodyLimitY 170`.
+
+Камера не менялась: `CameraJoint`, тот же путь, что у подката — свободный обзор.
+
+С `Beatrun_RollDebugLog 1` в консоли видно зацеп целиком:
+
+```
+[Beatrun Z-City] ledge grab: height 52, wall 22 away, impact 210, caught in the air -> hang (hanghardstart)
+```
 
 ---
 
@@ -1374,7 +1413,7 @@ beatrun_zcity_debug
 | `Beatrun_ZCity_SlideNoDamage` | `1` | Подкат защищает от урона и травм |
 | `Beatrun_ZCity_SlideShoot` | `1` | Стрельба и свободный прицел в подкате (только если оружие было в руках на старте) |
 | `Beatrun_ZCity_SlideSteer` | `0` | Менять курс подката клавишами A/D |
-| `Beatrun_RollAnim` | `0` | `0` — приземление вместо переката, `1` — перекат |
+| `Beatrun_RollAnim` | `0` | `0` — по высоте падения, `1` — всегда перекат, `2` — всегда колени |
 | `Beatrun_RollAlways` | `1` | Всегда играть перекат вместо обычного приземления |
 | `Beatrun_ZCity_SlideEnabled` | `1` | Включить слайд |
 | `Beatrun_ZCity_RollEnabled` | `1` | Включить страховочный перекат |
@@ -1397,14 +1436,14 @@ beatrun_zcity_debug
 | `Beatrun_ZCity_SlideAirCheck` | `1` | Автоматически прекращать слайд, когда под игроком заканчивается поверхность / обрыв |
 | `Beatrun_ZCity_RollHolster` | `1` | Автоматически убирать любое оружие в пустые руки во время страховочного переката |
 | `Beatrun_ZCity_RollMinHeight` | `70` | Минимальная высота падения, на которой вообще играется перекат |
-| `Beatrun_ZCity_RollBigHeight` | `350` | Высота, с которой играется настоящий перекат (ниже — приземление на колени) |
+| `Beatrun_ZCity_RollBigHeight` | `750` | Высота, с которой играется настоящий перекат (ниже — приземление на колени) |
 | `Beatrun_ZCity_ClimbEnabled` | `1` | Включить залазы на стены (зацеп/вис/подтягивание) |
-| `Beatrun_ZCity_ClimbHangHeight` | `74` | Насколько тело висит ниже края уступа |
+| `Beatrun_ZCity_ClimbHangHeight` | `77` | Насколько тело висит ниже края уступа (как в Beatrun) |
 | `Beatrun_ZCity_ClimbMaxLedgeHeight` | `84` | Макс. высота уступа над ногами для зацепа |
 | `Beatrun_ZCity_ClimbReach` | `60` | Дальность поиска стены впереди |
-| `Beatrun_ZCity_ClimbLowHeight` | `46` | Уступы до этой высоты перепрыгиваются (vaultonto), выше — вис и подтягивание |
-| `Beatrun_ZCity_ClimbHoldDelay` | `0.35` | Задержка перед подтягиванием по зажатому W |
-| `Beatrun_ZCity_ClimbHeaveTime` | `0.55` | Длительность подтягивания на уступ |
+| `Beatrun_ZCity_ClimbLowHeight` | `46` | Уступы до этой высоты: короткий вис и короткое подтягивание (те же анимации) |
+| `Beatrun_ZCity_ClimbHoldDelay` | `0.35` | Сколько висишь, прежде чем подтягивание начнётся само |
+| `Beatrun_ZCity_ClimbHeaveTime` | `0.85` | Длительность подтягивания на уступ |
 | `Beatrun_ZCity_ClimbCooldown` | `0.45` | Пауза между зацепами |
 | `Beatrun_ZCity_DebugHUD` | `1` | Панель диагностики камеры/трюка на экране |
 

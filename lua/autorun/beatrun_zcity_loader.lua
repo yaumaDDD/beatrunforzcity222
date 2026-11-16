@@ -1,7 +1,7 @@
 -- Which copy is this? Two copies of the addon in garrysmod/addons makes the game load the older one,
 -- and the player keeps seeing the old version no matter how often they download the new zip. Print the
 -- real path (and shout if a second copy already initialised) so this is impossible to miss.
-local THIS_VERSION = "2.21.15"
+local THIS_VERSION = "2.21.16"
 local thisFile = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
 if BeatrunZCity and BeatrunZCity.Version and BeatrunZCity.Version ~= THIS_VERSION then
