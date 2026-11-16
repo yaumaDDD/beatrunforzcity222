@@ -416,6 +416,7 @@ end
 function RemoveBodyAnim(smooth)
 	local ply = LocalPlayer()
 
+	BodyAnimWorldOffset = nil
 	BeatrunRestoreStaticPlayerModel(ply)
 	local canSmooth = smooth
 		and lastattachpos ~= nil
@@ -505,11 +506,16 @@ function StartBodyAnim(animtable)
 	BodyLimitX = animtable.BodyLimitX or 40
 	BodyLimitY = animtable.BodyLimitY or 80
 
+	-- 2.21.18: the ledge climb drives the player's origin INTO the wall (Beatrun does the same), which
+	-- put the rig - and the trick camera riding its head bone - inside the wall. posoffset moves only
+	-- the rendered rig, so the body hugs the wall face without the camera ending up in the brush.
+	BodyAnimWorldOffset = animtable.posoffset and Vector(animtable.posoffset) or nil
+
 	local startAng = animtable.StartAngle and Angle(animtable.StartAngle) or Angle(0, ply:EyeAngles().y, 0)
 	startAng.x = 0
 	startAng.z = 0
 
-	BodyAnim:SetPos(ply:GetPos())
+	BodyAnim:SetPos(ply:GetPos() + (BodyAnimWorldOffset or Vector(0, 0, 0)))
 	BodyAnim:SetAngles(startAng)
 	BodyAnim:SetNoDraw(true)
 
@@ -612,6 +618,7 @@ hook.Add("Think", "BeatrunZCity_BodyAnimThink", function()
 		if followplayer then
 			local pos = GetSmoothPlayerPos(ply)
 			pos.z = pos.z - BodyAnimFootDrop
+			if BodyAnimWorldOffset then pos = pos + BodyAnimWorldOffset end
 			if BodyAnimPosEaseLerp < 1 then
 				local eased = LerpVector(BodyAnimPosEaseLerp, BodyAnimPosEase, pos)
 				BodyAnimPosEaseLerp = math.Approach(BodyAnimPosEaseLerp, 1, dt * 5)

@@ -227,10 +227,11 @@ function BeatrunRollAnimStart(variant, lowRollFlag)
 		holdingWeapon = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh"
 	end
 
-	-- Height decides the pose (2.21.8):
-	--   lower than RollBigHeight -> "land" / "landgun"     (knee landing, like Beatrun)
-	--   RollBigHeight and up     -> "meroll" / "merollgun" (the actual safety roll)
-	--   twice RollBigHeight      -> "merollcrouch" / "merollguncrouch" (low roll for huge drops)
+	-- Height decides the pose, and only the pose (2.21.18):
+	--   RollMinHeight .. RollBigHeight-1 -> "land" / "landgun"     (knee landing, like Beatrun)
+	--   RollBigHeight .. RollMaxHeight    -> "meroll" / "merollgun" (the actual safety roll)
+	--   above RollMaxHeight               -> no trick at all, Z-City takes the landing
+	-- "merollcrouch" is still supported if the numbers are ever set to produce it.
 	local animName
 	local speed
 	if kneeLanding then

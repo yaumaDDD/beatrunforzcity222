@@ -12,7 +12,10 @@ local cvMaxSafeRollSpeed = GetConVar("Beatrun_ZCity_MaxSafeRollSpeed")
 local cvRollMinSpeed = GetConVar("Beatrun_ZCity_RollMinSpeed")
 local cvRollMinHeight = GetConVar("Beatrun_ZCity_RollMinHeight")
 local cvRollBigHeight = GetConVar("Beatrun_ZCity_RollBigHeight")
+local cvRollMaxHeight = GetConVar("Beatrun_ZCity_RollMaxHeight")
 local cvRollDebugLog = GetConVar("Beatrun_RollDebugLog")
+
+local rollTrace = {}
 
 local HANDS_CLASSES = { "weapon_hands_sh", "weapon_hands", "gmod_hands" }
 
@@ -179,14 +182,13 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 		-- and pushed the player towards world +X on every knee landing.
 		local landInPlace = isfunction(ply.GetRollLand) and ply:GetRollLand() or false
 
-		local rollSpeed = 0
 		if not landInPlace then
 			local vel = mv:GetVelocity()
-			vel.x = 0
-			vel.y = 0
+			local downVel = math.min(0, vel.z)
 
 			local mobility = BeatrunGetMobilityFactor(ply)
 			local speedloss = cvRollSpeedLoss:GetBool() or ply:GetRollLoss()
+			local rollSpeed
 
 			if speedloss then
 				rollSpeed = 250 * mobility
@@ -203,22 +205,60 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 			dir.z = 0
 			if dir:LengthSqr() > 0.001 then dir:Normalize() else dir = Vector(0, 0, 0) end
 
-			-- 2.21.17: the roll has to carry the body forward, like Beatrun's does. Z-City's inertia
-			-- (homigrad/movement/sh_inertia.lua) rebuilds the movement wish from ply.MovementInertia in
-			-- its own SetupMove, and our hook runs after it - zeroing the wish speeds here is exactly
-			-- what kept the roll in place. So the roll direction is handed back as the movement wish and
-			-- the velocity is set as well, for servers whose inertia is off.
-			local viewAng = Angle(0, ply:EyeAngles().y, 0)
-			local wishFwd = dir:Dot(viewAng:Forward()) * rollSpeed
-			local wishSide = dir:Dot(viewAng:Right()) * rollSpeed
+			-- 2.21.18: the roll carries the body itself instead of only asking for speed. Z-City's
+			-- inertia (homigrad/movement/sh_inertia.lua) rebuilds the movement wish from its own inertia
+			-- vector in a SetupMove that runs BEFORE ours, so a SetVelocity never survived a ducked
+			-- landing and the roll stayed in place. Moving the origin inside SetupMove is exactly what
+			-- the ledge climb already does and it works there, so the roll does the same, with a hull
+			-- trace in front of it so a wall stops the roll instead of being rolled through.
+			if dir:LengthSqr() > 0.001 then
+				local dt = 0.015
+				if engine and isfunction(engine.TickInterval) then
+					dt = math.Clamp(engine.TickInterval(), 0.001, 0.1)
+				end
 
-			mv:SetForwardSpeed(wishFwd)
-			mv:SetSideSpeed(wishSide)
-			mv:SetMaxSpeed(rollSpeed)
-			mv:SetMaxClientSpeed(rollSpeed)
+				local step = dir * (rollSpeed * dt)
+				local origin = mv:GetOrigin()
+
+				if step:LengthSqr() > 0.000001 then
+					local mins, maxs
+					if isfunction(ply.OBBMins) and isfunction(ply.OBBMaxs) then
+						mins, maxs = ply:OBBMins(), ply:OBBMaxs()
+					else
+						mins, maxs = ply:GetHull()
+					end
+
+					-- traced 2 units above the feet so the sweep never starts inside the floor
+					rollTrace.start = origin + Vector(0, 0, 2)
+					rollTrace.endpos = rollTrace.start + step
+					rollTrace.mins = mins
+					rollTrace.maxs = maxs
+					rollTrace.filter = ply
+					rollTrace.mask = MASK_PLAYERSOLID
+					rollTrace.collisiongroup = COLLISION_GROUP_PLAYER_MOVEMENT
+
+					local tr = util.TraceHull(rollTrace)
+					if tr.Hit then
+						step = step * math.Clamp(tr.Fraction or 0, 0, 1)
+					end
+
+					if step:LengthSqr() > 0.000001 then
+						mv:SetOrigin(origin + step)
+					end
+				end
+			end
+
+			-- The forward speed lives in the origin now, so the engine must not add it a second time:
+			-- velocity stays vertical only and the wish speeds stay empty.
+			mv:SetVelocity(Vector(0, 0, downVel))
+			mv:SetForwardSpeed(0)
+			mv:SetSideSpeed(0)
+			mv:SetMaxSpeed(math.max(100, rollSpeed))
+			mv:SetMaxClientSpeed(math.max(100, rollSpeed))
 			ply:SetMaxSpeed(math.max(100, rollSpeed))
-			mv:SetVelocity(dir * rollSpeed + vel)
 
+			-- Z-City keeps its own momentum vector: pointed along the roll it also carries the body on
+			-- for a moment after the roll ends instead of stopping dead.
 			ply.MovementInertia = dir * rollSpeed
 			ply.CurrentSpeed = rollSpeed
 		else
@@ -237,31 +277,54 @@ end, "HOOK_LOW")
 
 -- ---------------------------------------------------------------------------
 -- One place that maps a fall height to a trick, shared by the client and the server so the animation
--- can never disagree with the movement:
---   1 = knee landing  "land" / "landgun"                 (below Beatrun_ZCity_RollBigHeight)
---   2 = real roll     "meroll" / "merollgun"             (RollBigHeight .. 2 x RollBigHeight)
---   3 = low roll      "merollcrouch" / "merollguncrouch" (2 x RollBigHeight and above)
--- Beatrun_RollAnim 1 forces 2/3, 2 forces 1.
+-- can never disagree with the movement. 2.21.18 numbers (the user's own):
+--   0 = no trick, plain Z-City landing     below RollMinHeight (290)
+--   1 = knee landing   "land" / "landgun"  RollMinHeight (290) .. RollBigHeight-1 (349)
+--   2 = real roll      "meroll" / ...      RollBigHeight (350) .. RollMaxHeight (750)
+--   0 = no trick, Z-City fall injuries     above RollMaxHeight (750) - nothing saves that fall
+-- Beatrun_RollAnim 1 forces the roll, 2 forces the knee landing (inside the same height window).
 -- ---------------------------------------------------------------------------
 function BeatrunRollVariantForHeight(fallHeight)
 	fallHeight = math.max(0, fallHeight or 0)
 
-	local bigHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 350
+	local kneeHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
+	local rollHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 350
+	local maxHeight = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
 	local rollMode = cvRollAnim and cvRollAnim:GetInt() or 0
 
-	local useRoll
-	if rollMode == 2 then
-		useRoll = false
-	elseif rollMode == 1 then
-		useRoll = true
-	else
-		useRoll = fallHeight >= bigHeight
+	-- too far to be saved by a trick: Z-City owns that landing completely
+	if fallHeight > maxHeight then return 0, false, false, rollHeight end
+
+	local variant = 0
+	if fallHeight >= rollHeight then
+		variant = 2
+	elseif fallHeight >= kneeHeight then
+		variant = 1
 	end
 
-	local lowRoll = useRoll and fallHeight >= bigHeight * 2
-	local variant = useRoll and (lowRoll and 3 or 2) or 1
+	if variant ~= 0 then
+		if rollMode == 1 then
+			variant = 2
+		elseif rollMode == 2 then
+			variant = 1
+		end
+	end
 
-	return variant, useRoll, lowRoll, bigHeight
+	return variant, variant == 2, false, rollHeight
+end
+
+-- Fall height measured the same way everywhere (peak of the fall / last measured landing)
+local function MeasuredFallHeight(ply)
+	local h = math.max(0, (ply._BRZFallPeakZ or ply:GetPos().z) - ply:GetPos().z)
+	if ply._BRZLastFallHeight and ply._BRZLastFallHeight > h then h = ply._BRZLastFallHeight end
+	return h
+end
+
+-- 2.21.18: a fall above RollMaxHeight is beyond what a trick can save. Nothing of ours may touch that
+-- landing - Z-City hands out its own injuries (broken legs, ragdoll), exactly like it does without us.
+local function TrickCanSave(height)
+	local maxHeight = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
+	return height <= maxHeight
 end
 
 -- Runs BEFORE Z-City's fallStun and returns true only when a timed roll mitigates the impact
@@ -288,12 +351,16 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	if speed < cvRollMinSpeed:GetFloat() or speed > hardCap then return end
 
 	-- Height gate (2.21.7): the roll is the answer to a real fall, not to a step down or a normal jump.
-	local fallHeight = math.max(0, (ply._BRZFallPeakZ or ply:GetPos().z) - ply:GetPos().z)
-	if ply._BRZLastFallHeight and ply._BRZLastFallHeight > fallHeight then
-		fallHeight = ply._BRZLastFallHeight
+	local fallHeight = MeasuredFallHeight(ply)
+
+	if not TrickCanSave(fallHeight) then
+		if cvRollDebugLog and cvRollDebugLog:GetBool() then
+			print(string.format("[Beatrun Z-City] fall %.0f units is above RollMaxHeight - no trick, Z-City takes the landing", fallHeight))
+		end
+		return
 	end
 
-	local minHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 70
+	local minHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
 	if fallHeight < minHeight then
 		if cvRollDebugLog and cvRollDebugLog:GetBool() then
 			print(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - too low for a roll", fallHeight, speed))
@@ -347,6 +414,11 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	end
 	if useRoll and standingStill and (not cvRollAlways or not cvRollAlways:GetBool()) then
 		useRoll = false
+	end
+
+	-- keep the animation in step with the movement: the downgrade above must also downgrade the pose
+	if variant ~= 0 then
+		variant = useRoll and 2 or 1
 	end
 
 	ply._BRZRollVariant = variant
@@ -461,6 +533,19 @@ local function FallStunWrapper(ply, inwater, onfloater, speed)
 			or CT < rollEnd                                         -- the roll is still playing
 			or ply._BRZFallArmed                                    -- a roll is armed and will take it
 
+		if blocked and not TrickCanSave(MeasuredFallHeight(ply)) then
+			-- 2.21.18: a fall this big is not ours. Drop the arm and let Z-City run its own landing.
+			ply._BRZFallArmed = nil
+			ply._BeatrunRollHandledUntil = nil
+			ply._BRZRollProtectUntil = nil
+			if isfunction(ply.SetSafetyRollTime) then ply:SetSafetyRollTime(0) end
+			blocked = false
+
+			if cvRollDebugLog and cvRollDebugLog:GetBool() then
+				print("[Beatrun Z-City] fall above RollMaxHeight - Z-City takes this landing")
+			end
+		end
+
 		if blocked then
 			if cvRollDebugLog and cvRollDebugLog:GetBool() then
 				print("[Beatrun Z-City] Z-City fallStun blocked - the roll owns this landing")
@@ -550,11 +635,9 @@ if SERVER then
 
 		-- Height gate has to be mirrored here: a drop that is too small for a roll keeps Z-City's own
 		-- fall damage instead of being silently negated by a held Ctrl.
-		local fallHeight = math.max(0, (ply._BRZFallPeakZ or ply:GetPos().z) - ply:GetPos().z)
-		if ply._BRZLastFallHeight and ply._BRZLastFallHeight > fallHeight then
-			fallHeight = ply._BRZLastFallHeight
-		end
-		if fallHeight < (cvRollMinHeight and cvRollMinHeight:GetFloat() or 70) then return end
+		local fallHeight = MeasuredFallHeight(ply)
+		if fallHeight < (cvRollMinHeight and cvRollMinHeight:GetFloat() or 290) then return end
+		if not TrickCanSave(fallHeight) then return end -- too big to be saved: Z-City damage stays
 
 		local hardCap = math.max(maxSafeSpeed, 3000)
 		if not rolled or speed > hardCap then
