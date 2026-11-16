@@ -5,6 +5,63 @@ local qslide_duration = 1.15
 local cvSlideEnabled = GetConVar("Beatrun_ZCity_SlideEnabled")
 local cvSlideMinSpeed = GetConVar("Beatrun_ZCity_SlideMinSpeed")
 local cvAutoHold = GetConVar("Beatrun_ZCity_SlideAutoHold")
+local cvSlideAirCheck = GetConVar("Beatrun_ZCity_SlideAirCheck")
+local cvSlideYawLimit = GetConVar("Beatrun_ZCity_SlideYawLimit")
+
+local SLIDE_CORE_MINS = Vector(-8, -8, 0)
+local SLIDE_CORE_MAXS = Vector(8, 8, 4)
+local SLIDE_SURFACE_START_UP = Vector(0, 0, 4)
+local SLIDE_SURFACE_FALLBACK_UP = Vector(0, 0, 12)
+local SLIDE_SURFACE_CHECK_DROP = Vector(0, 0, 26)
+local SLIDE_MIN_WALKABLE_Z = 0.55
+
+-- Checks whether there is solid walkable/sloped surface support beneath the player's core body.
+-- Uses a 16x16 core hull dropped 26 units (larger than Source's 18u step height and steep ramps)
+-- so stairs/slopes stay smooth while sliding past a rooftop/ledge edge terminates right at the drop.
+local function HasSlideGroundSupport(ply, origin, onground)
+	if cvSlideAirCheck and not cvSlideAirCheck:GetBool() then
+		return true
+	end
+
+	if not IsValid(ply) or not isvector(origin) then return false end
+	if ply:WaterLevel() >= 2 then return false end
+
+	ply._BRZSlideCoreOut = ply._BRZSlideCoreOut or {}
+	ply._BRZSlideCoreTr = ply._BRZSlideCoreTr or {
+		mins = SLIDE_CORE_MINS,
+		maxs = SLIDE_CORE_MAXS,
+		mask = MASK_PLAYERSOLID,
+		collisiongroup = COLLISION_GROUP_PLAYER_MOVEMENT,
+		output = ply._BRZSlideCoreOut
+	}
+
+	local tr = ply._BRZSlideCoreTr
+	local out = ply._BRZSlideCoreOut
+	tr.filter = ply
+	tr.start = origin + SLIDE_SURFACE_START_UP
+	tr.endpos = origin - SLIDE_SURFACE_CHECK_DROP
+	util.TraceHull(tr)
+
+	if out.StartSolid then
+		tr.start = origin + SLIDE_SURFACE_FALLBACK_UP
+		util.TraceHull(tr)
+		if out.StartSolid then
+			return onground
+		end
+	end
+
+	if out.Hit and isvector(out.HitNormal) and out.HitNormal.z >= SLIDE_MIN_WALKABLE_Z then
+		return true
+	end
+
+	return false
+end
+
+function BeatrunGetSlideYawLimit()
+	local limit = cvSlideYawLimit and cvSlideYawLimit:GetFloat() or 90
+	if limit <= 0 or limit >= 180 then return 0 end
+	return math.Clamp(limit, 5, 179)
+end
 
 local slide_sounds = {
 	[0] = { "Slide.Concrete" },
@@ -123,7 +180,7 @@ local function RestorePlayerSlideState(ply)
 	ply._BeatrunOrigViewOffsetDucked = nil
 end
 
-local function EndSlideState(ply, mv, blocked, jumped, slippery)
+local function EndSlideState(ply, mv, blocked, jumped, slippery, fellOff)
 	local CT = CurTime()
 	ply:SetSliding(false)
 	ply:SetSlidingTime(0)
@@ -134,31 +191,45 @@ local function EndSlideState(ply, mv, blocked, jumped, slippery)
 		ply.SlideLoopSound:FadeOut(0.15)
 	end
 
-	if not jumped then
+	if not jumped and not fellOff then
 		ply:ViewPunch(Angle(0.85, 0.35, 0))
 	end
 
 	RestorePlayerSlideState(ply)
+	ply._BRZSlideMuzzlePos = nil
+	ply._BRZSlideMuzzleDir = nil
+	ply._BRZSlideMuzzleTime = nil
 
 	-- Sync velocity cleanly back to Z-City inertia
 	if mv then
 		local v = mv:GetVelocity()
+		if fellOff then
+			-- Release auto-held crouch when dropping off a ledge so the player falls naturally
+			-- and can immediately arm a safety roll before hitting the ground below.
+			mv:SetButtons(bit.band(mv:GetButtons(), bit.bnot(IN_DUCK)))
+			ply:SetGroundEntity(nil)
+			v.x = v.x * 0.9
+			v.y = v.y * 0.9
+			mv:SetVelocity(v)
+		end
 		ply.MovementInertia = v
 		ply.CurrentSpeed = math.sqrt(v.x * v.x + v.y * v.y)
 	end
 
 	if CLIENT and IsFirstTimePredicted() and BeatrunSlideAnimEnd then
-		BeatrunSlideAnimEnd(slippery and true or false, blocked and true or false)
+		BeatrunSlideAnimEnd((slippery or fellOff) and true or false, blocked and true or false, fellOff and true or false)
 	elseif SERVER then
 		if game.SinglePlayer() then
 			net.Start("sliding_spend")
 				net.WriteBool(blocked and true or false)
 				net.WriteBool(slippery and true or false)
+				net.WriteBool(fellOff and true or false)
 			net.Send(ply)
 		else
 			net.Start("Beatrun_ZC_SlideEnd")
 				net.WriteBool(blocked and true or false)
 				net.WriteBool(slippery and true or false)
+				net.WriteBool(fellOff and true or false)
 			net.Send(ply)
 		end
 	end
@@ -235,8 +306,9 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 	local minSpeed = cvSlideMinSpeed:GetFloat() * (0.85 + 0.15 * mobility)
 	local ableToSlide = duckPressed and sprinting and not aiming and not jumping and horizSpeed >= minSpeed
 	local alreadySliding = sliding or (ply:GetSlidingDelay() >= CT)
+	local origin = mv:GetOrigin()
 
-	if not alreadySliding and onground and ableToSlide then
+	if not alreadySliding and onground and ableToSlide and HasSlideGroundSupport(ply, origin, onground) then
 		SavePlayerSlideState(ply)
 
 		local startVel = math.Clamp(horizSpeed * 1.12 * mobility, 220, 480 * mobility)
@@ -250,10 +322,10 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 		ply:SetSliding(true)
 		ply:SetSlidingSlippery(false)
 
-		-- Shooting during the slide is only allowed if a real weapon was already in hand when the
-		-- slide started (sliding with bare hands must not let the player fire mid-slide).
+		-- Armed slide is only enabled if a valid non-melee weapon was already in hand when the
+		-- slide started (bare hands and melee SWEPs use the regular unarmed slide).
 		local wep = ply:GetActiveWeapon()
-		ply._BRZSlideArmed = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh" or false
+		ply._BRZSlideArmed = BeatrunIsSlideWeapon(wep)
 
 		ply._BRZSlideProtectUntil = CT + 0.2
 
@@ -263,7 +335,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 		ply:SetSlidingAngle(slideAng)
 		ply:SetSlidingVel(startVel)
 		ply:SetSlidingStrafe(0)
-		ply:SetSlidingLastPos(mv:GetOrigin())
+		ply:SetSlidingLastPos(origin)
 		ply.SlidingInitTime = CT
 
 		if not ply:Crouching() then
@@ -275,7 +347,7 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 
 		if SERVER then
 			BeatrunConsumeStamina(ply, 8)
-			local mat = SlideSurfaceSound(ply, mv:GetOrigin())
+			local mat = SlideSurfaceSound(ply, origin)
 			SlideLoopSound(ply, mat)
 		end
 
@@ -295,7 +367,14 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 		sliding = true
 	end
 
-	if sliding and ((not ducking and not slippery and not autohold) or (not onground and not autohold)) then
+	-- Surface support check applies ALWAYS (including when SlideAutoHold is enabled) so sliding past
+	-- a rooftop/ledge edge terminates cleanly at the drop instead of gliding horizontally in mid-air.
+	if sliding and not HasSlideGroundSupport(ply, origin, onground) then
+		EndSlideState(ply, mv, false, false, false, true)
+		return
+	end
+
+	if sliding and not ducking and not slippery and not autohold then
 		local blocked = false
 		if not ducking then
 			ply.SlideHull = ply.SlideHull or {}
@@ -303,7 +382,6 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 			local hulltr = ply.SlideHull
 			local hulltrout = ply.SlideHullOut
 			local mins, maxs = ply:GetHull()
-			local origin = mv:GetOrigin()
 
 			hulltr.start = origin
 			hulltr.endpos = origin
@@ -320,13 +398,13 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 			end
 		end
 
-		EndSlideState(ply, mv, blocked, false, false)
+		EndSlideState(ply, mv, blocked, false, false, false)
 		return
 	end
 
 	if sliding and autohold and duckPressed and (CT - (ply.SlidingInitTime or 0)) > 0.2 then
 		-- A second, deliberate crouch press cancels the auto-held slide
-		EndSlideState(ply, mv, false, false, slippery)
+		EndSlideState(ply, mv, false, false, slippery, false)
 		return
 	end
 
@@ -349,11 +427,16 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 		local slidedelta = (ply:GetSlidingTime() - CT) / slidetime
 		local speed = ply:GetSlidingVel() * math.min(1.55, (ply:GetSlidingTime() - CT + 0.5) / slidetime)
 
-		-- Override Z-City's speed cap cleanly during the active slide only
+		-- Override Z-City's speed cap cleanly during the active slide only; preserve downward
+		-- velocity if momentarily off-ground over a slope crest so gravity hugs downward ramps.
 		mv:SetMaxSpeed(speed)
 		mv:SetMaxClientSpeed(speed)
 		ply:SetMaxSpeed(math.max(100, speed))
-		mv:SetVelocity(ply:GetSlidingAngle():Forward() * speed)
+		local slideVel = ply:GetSlidingAngle():Forward() * speed
+		if not onground then
+			slideVel.z = math.min(0, velVec.z)
+		end
+		mv:SetVelocity(slideVel)
 		ply.MovementInertia = mv:GetVelocity()
 
 		local pos = mv:GetOrigin()
@@ -424,6 +507,29 @@ BeatrunAddOrderedHook("StartCommand", "zz_BeatrunZCity_SlideCmd", function(ply, 
 		cmd:RemoveKey(IN_SPEED)
 		cmd:ClearMovement()
 
+		-- Limit horizontal look/aim rotation relative to the slide direction while armed so the
+		-- player cannot snap their neck 180 degrees and shoot behind their own back.
+		local limit = BeatrunGetSlideYawLimit()
+		if limit > 0 then
+			local wep = ply:GetActiveWeapon()
+			local armed = ply._BRZSlideArmed or BeatrunIsSlideWeapon(wep)
+			if armed then
+				local slideAng = ply:GetSlidingAngle()
+				if isangle(slideAng) then
+					local effLimit = SERVER and math.min(180, limit + 5) or limit
+					local ang = cmd:GetViewAngles()
+					local diff = math.AngleDifference(ang.y, slideAng.y)
+					if diff > effLimit then
+						ang.y = math.NormalizeAngle(slideAng.y + effLimit)
+						cmd:SetViewAngles(ang)
+					elseif diff < -effLimit then
+						ang.y = math.NormalizeAngle(slideAng.y - effLimit)
+						cmd:SetViewAngles(ang)
+					end
+				end
+			end
+		end
+
 		local slidetime = math.max(0.1, qslide_duration)
 		local autohold = cvAutoHold and cvAutoHold:GetBool()
 		if autohold or ((ply:GetSlidingTime() - CurTime()) / slidetime > 0.8 and ((ply.SlidingInitTime or 0) > CurTime() - 0.25 or ply:GetSlidingSlippery())) then
@@ -450,3 +556,105 @@ hook.Add("HG_PlayerFootstep", "BeatrunZCity_SilenceSlide", function(ply)
 		return true
 	end
 end)
+
+-- Receive the drawn right-hand pistol muzzle origin & barrel direction from the sliding client
+-- so server bullets originate from and fly along the exact direction of the animated shooting hand.
+if SERVER then
+	net.Receive("Beatrun_ZC_SlideAim", function(_, ply)
+		if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return end
+		if not ply:GetSliding() or not ply._BRZSlideArmed or not BeatrunCanSlideOrRoll(ply) then return end
+
+		local mpos = net.ReadVector()
+		local mdir = net.ReadNormal()
+		if not isvector(mpos) or not isvector(mdir) then return end
+
+		local len = mdir:Length()
+		if len < 0.01 then return end
+		mdir = mdir * (1 / len)
+
+		-- Anti-exploit bounds: muzzle must stay near the sliding player, aligned with real aim,
+		-- and within the allowed left/right slide yaw cone (cannot shoot behind own back).
+		local anchor = ply:GetPos() + Vector(0, 0, 24)
+		if (mpos - anchor):LengthSqr() > 128 * 128 then return end
+		if mdir:Dot(ply:GetAimVector()) < 0.15 then return end
+
+		local limit = BeatrunGetSlideYawLimit()
+		if limit > 0 and mdir:Length2D() > 0.15 then
+			local slideAng = ply:GetSlidingAngle()
+			if isangle(slideAng) then
+				local yawDiff = math.abs(math.AngleDifference(mdir:Angle().y, slideAng.y))
+				if yawDiff > math.min(180, limit + 18) then return end
+			end
+		end
+
+		ply._BRZSlideMuzzlePos = mpos
+		ply._BRZSlideMuzzleDir = mdir
+		ply._BRZSlideMuzzleTime = CurTime()
+	end)
+end
+
+-- Redirect bullets fired during an armed slide so they originate from the drawn right-hand weapon
+-- barrel and fly strictly along its pointing direction (ignoring secondary ricochet/penetration shots).
+hook.Add("EntityFireBullets", "BeatrunZCity_SlideBulletAim", function(ent, data)
+	if not istable(data) then return end
+	if (data.penetrated and data.penetrated > 0) or (data.limit_ricochet and data.limit_ricochet > 0) then return end
+
+	local ply = data.Attacker
+	if not (IsValid(ply) and ply:IsPlayer()) then
+		if IsValid(ent) and ent:IsPlayer() then
+			ply = ent
+		elseif IsValid(ent) and ent.GetOwner and IsValid(ent:GetOwner()) and ent:GetOwner():IsPlayer() then
+			ply = ent:GetOwner()
+		else
+			return
+		end
+	end
+
+	if not ply:GetSliding() or not ply._BRZSlideArmed or ply.suiciding then return end
+	if not (isvector(ply._BRZSlideMuzzlePos) and isvector(ply._BRZSlideMuzzleDir)) then return end
+	if (CurTime() - (ply._BRZSlideMuzzleTime or 0)) > 0.25 then return end
+
+	local mpos = ply._BRZSlideMuzzlePos
+	local mdir = ply._BRZSlideMuzzleDir
+	local wpn = ply:GetActiveWeapon()
+
+	-- Wall-clip guard: if a wall lies between the sliding chest and the extended hand, clamp to the wall.
+	local chestPos = ply:GetPos() + Vector(0, 0, 20)
+	local filter = { ply }
+	if IsValid(wpn) then
+		filter[#filter + 1] = wpn
+		if IsValid(wpn.worldModel) then
+			filter[#filter + 1] = wpn.worldModel
+		end
+	end
+	local tr = util.TraceLine({
+		start = chestPos,
+		endpos = mpos,
+		filter = filter,
+		mask = MASK_SHOT
+	})
+	local safeSrc = tr.Hit and (tr.HitPos - tr.Normal * 1.5) or mpos
+
+	data.Src = safeSrc
+	data.Dir = mdir
+
+	-- Keep Z-City's client worldModel & desiredPos snapped to the drawn right-hand slide transform so
+	-- the muzzle flash spawned immediately after FireLuaBullets comes right out of the drawn barrel.
+	if CLIENT and ply == LocalPlayer() and IsValid(wpn) and isvector(wpn._BRZSlideGunPos) and isangle(wpn._BRZSlideGunAng) then
+		if (CurTime() - (wpn._BRZSlideGunTime or 0)) <= 0.15 then
+			wpn.desiredPos = wpn._BRZSlideGunPos
+			wpn.desiredAng = wpn._BRZSlideGunAng
+			local wm = wpn.worldModel
+			if IsValid(wm) then
+				wm:SetRenderOrigin(wpn._BRZSlideGunPos)
+				wm:SetRenderAngles(wpn._BRZSlideGunAng)
+				wm:SetPos(wpn._BRZSlideGunPos)
+				wm:SetAngles(wpn._BRZSlideGunAng)
+				wm:SetupBones()
+			end
+		end
+	end
+
+	return true
+end)
+

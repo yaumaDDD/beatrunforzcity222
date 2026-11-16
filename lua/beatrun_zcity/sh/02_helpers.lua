@@ -3,6 +3,78 @@
 local cvOrganism = GetConVar("Beatrun_ZCity_OrganismImpact")
 local cvStamina = GetConVar("Beatrun_ZCity_StaminaDrain")
 
+local SLIDE_NON_WEAPONS = {
+	["weapon_hands_sh"] = true,
+	["weapon_hg_coolhands"] = true,
+	["weapon_fists"] = true,
+	["weapon_crowbar"] = true,
+	["weapon_stunstick"] = true,
+	["weapon_melee"] = true,
+}
+
+local MELEE_HOLDTYPES = {
+	["melee"] = true,
+	["melee2"] = true,
+	["knife"] = true,
+	["fist"] = true,
+}
+
+local MELEE_BASES = {
+	"weapon_melee",
+	"tfa_melee_base",
+	"arccw_base_melee",
+	"arc9_base_melee",
+	"cw_melee_base",
+	"mg_melee_base",
+}
+
+-- Returns true if the weapon is bare hands or a melee SWEP (excluded from armed-slide mode).
+function BeatrunIsMeleeWeapon(wpn)
+	if not IsValid(wpn) then return false end
+
+	local cls = wpn.GetClass and wpn:GetClass() or ""
+	if SLIDE_NON_WEAPONS[cls] then return true end
+
+	-- Z-City weapon_melee & derivatives set ismelee/ismelee2; third-party melee packs commonly set IsMelee/Melee.
+	if wpn.ismelee or wpn.ismelee2 or wpn.IsMelee or wpn.IsMeleeWeapon or wpn.IsMelee2 or wpn.Melee then
+		return true
+	end
+
+	if weapons and isfunction(weapons.IsBasedOn) and cls ~= "" then
+		for i = 1, #MELEE_BASES do
+			if weapons.IsBasedOn(cls, MELEE_BASES[i]) then
+				return true
+			end
+		end
+	end
+
+	if isstring(wpn.Base) and string.find(string.lower(wpn.Base), "melee", 1, true) then
+		return true
+	end
+
+	if isstring(wpn.Category) and string.find(string.lower(wpn.Category), "melee", 1, true) then
+		return true
+	end
+
+	-- HoldType fallback for third-party melee SWEPs (never misclassify Z-City firearms).
+	local isZCityGun = isfunction(wpn.WorldModel_Transform)
+		or (weapons and isfunction(weapons.IsBasedOn) and cls ~= "" and weapons.IsBasedOn(cls, "homigrad_base"))
+	if not isZCityGun then
+		local ht = (isfunction(wpn.GetHoldType) and wpn:GetHoldType()) or wpn.HoldType
+		if isstring(ht) and MELEE_HOLDTYPES[string.lower(ht)] then
+			return true
+		end
+	end
+
+	return false
+end
+
+-- Returns true if the weapon qualifies for armed slide (excludes bare hands and all melee SWEPs).
+function BeatrunIsSlideWeapon(wpn)
+	if not IsValid(wpn) then return false end
+	return not BeatrunIsMeleeWeapon(wpn)
+end
+
 -- Polyfill FastToTable if missing
 function FastToTable(tbl)
 	return istable(tbl) and tbl or {}

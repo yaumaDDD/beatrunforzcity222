@@ -6,12 +6,56 @@ local cvRollSpeedLoss = GetConVar("Beatrun_RollSpeedLoss")
 local cvRollAlways = GetConVar("Beatrun_RollAlways")
 local cvRollAnim = GetConVar("Beatrun_RollAnim")
 local cvRollNoDamage = GetConVar("Beatrun_RollNoDamage")
+local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 local cvRollFallReduction = GetConVar("Beatrun_ZCity_RollFallReduction")
 local cvMaxSafeRollSpeed = GetConVar("Beatrun_ZCity_MaxSafeRollSpeed")
 local cvRollMinSpeed = GetConVar("Beatrun_ZCity_RollMinSpeed")
 local cvRollDebugLog = GetConVar("Beatrun_RollDebugLog")
 
 local landang = Angle(0, 0, 0)
+
+local HANDS_CLASSES = { "weapon_hands_sh", "weapon_hands", "gmod_hands" }
+
+local function FindHandsWeapon(ply)
+	if not IsValid(ply) or not ply.GetWeapon then return nil end
+	for _, cls in ipairs(HANDS_CLASSES) do
+		local w = ply:GetWeapon(cls)
+		if IsValid(w) then return w end
+	end
+	return nil
+end
+
+local function IsHandsClass(cls)
+	return cls == "weapon_hands_sh" or cls == "weapon_hands" or cls == "gmod_hands"
+end
+
+-- Holsters any equipped weapon to bare hands (weapon_hands_sh in Z-City) during a safety roll,
+-- matching Z-City's own TauntHolsterWeapons pattern in movement/sh_inertia.lua.
+local function HolsterWeaponForRoll(ply, cmd)
+	if cvRollHolster and not cvRollHolster:GetBool() then return end
+	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return end
+
+	local active = ply:GetActiveWeapon()
+	local activeClass = IsValid(active) and active:GetClass() or nil
+	if activeClass and IsHandsClass(activeClass) then return end
+
+	local hands = FindHandsWeapon(ply)
+	if IsValid(hands) then
+		if cmd and isfunction(cmd.SelectWeapon) then
+			cmd:SelectWeapon(hands)
+		end
+		if SERVER then
+			ply:SelectWeapon(hands:GetClass())
+			if ply:GetActiveWeapon() ~= hands and isfunction(ply.SetActiveWeapon) then
+				ply:SetActiveWeapon(hands)
+			end
+		elseif CLIENT and ply == LocalPlayer() and input and isfunction(input.SelectWeapon) then
+			pcall(input.SelectWeapon, hands)
+		end
+	elseif SERVER and IsValid(active) and isfunction(ply.SetActiveWeapon) then
+		ply:SetActiveWeapon(NULL)
+	end
+end
 
 BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, mv, cmd)
 	if not IsValid(ply) or not ply:IsPlayer() then return end
@@ -157,6 +201,9 @@ local function TrySafetyRoll(ply, water, floater, speed)
 		ply:SetSafetyRollTime(CT + 1.0)
 	end
 
+	-- Immediately stow any held firearm/melee/item to bare hands when entering the safety roll
+	HolsterWeaponForRoll(ply)
+
 	if SERVER then
 		BeatrunConsumeStamina(ply, math.Clamp(speed / 38, 8, 22))
 		if not isLandInPlace then
@@ -205,6 +252,19 @@ local function TrySafetyRoll(ply, water, floater, speed)
 end
 
 BeatrunAddOrderedHook("OnPlayerHitGround", "!BeatrunZCity_SafetyRoll", TrySafetyRoll, "HOOK_HIGH")
+
+-- Keep hands bare for the full duration of the safety roll so a weapon cannot be drawn or fired mid-roll
+BeatrunAddOrderedHook("StartCommand", "zz_BeatrunZCity_RollHolster", function(ply, cmd)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+	if cvRollHolster and not cvRollHolster:GetBool() then return end
+	if not BeatrunCanSlideOrRoll(ply) then return end
+
+	if ply.GetSafetyRollTime and CurTime() < ply:GetSafetyRollTime() then
+		HolsterWeaponForRoll(ply, cmd)
+		cmd:RemoveKey(IN_ATTACK)
+		cmd:RemoveKey(IN_ATTACK2)
+	end
+end, "HOOK_LOW")
 
 -- Z-City's own landing hook, wrapped. Whichever hook the engine runs first, the roll is decided first:
 -- accepted -> Z-City's fallStun (and the ragdoll it fires through hg.LightStunPlayer) never runs;

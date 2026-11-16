@@ -13,13 +13,16 @@ CreateConVar("Beatrun_ZCity_RollFallReduction", "0.65", REP, "Fraction of Z-City
 CreateConVar("Beatrun_ZCity_MaxSafeRollSpeed", "3000", REP, "Maximum vertical impact speed a timed safety roll can mitigate", 500, 4000)
 CreateConVar("Beatrun_RollSpeedLoss", "1", REP, "Whether safety rolls slow down to roll pace instead of preserving full speed", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideAutoHold", "1", REP, "Once the slide is started with the sprint+crouch combo it plays to the end without holding the keys (press crouch again to cancel)", 0, 1)
+CreateConVar("Beatrun_ZCity_SlideAirCheck", "1", REP, "Stop sliding automatically when sliding off a ledge or losing surface support", 0, 1)
 CreateConVar("Beatrun_RollNoDamage", "1", REP, "A successful timed safety roll negates fall damage completely", 0, 1)
+CreateConVar("Beatrun_ZCity_RollHolster", "1", REP, "Holster any equipped weapon to bare hands during a safety roll", 0, 1)
 CreateClientConVar("Beatrun_ZCity_SlideWeapon", "1", true, false, "Armed slide: 0 = clean first person (animated body hidden), 1 = animated body legs plus your own viewmodel with the weapon", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideNoDamage", "1", REP, "A slide protects from Z-City impact damage and injuries", 0, 1)
 CreateConVar("Beatrun_ZCity_RollMinSpeed", "250", REP, "Minimum fall speed at which a timed roll activates", 0, 2000)
 CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether the roll accepted them", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideSteer", "0", REP, "Allow changing the slide course with strafe keys (0 = course is fixed)", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideShoot", "1", REP, "Allow free aiming and shooting during a slide", 0, 1)
+CreateConVar("Beatrun_ZCity_SlideYawLimit", "90", REP, "Maximum left/right look and aim angle (degrees) relative to slide direction while sliding with a weapon (0 = unlimited)", 0, 180)
 CreateConVar("Beatrun_RollAnim", "0", REP, "Safety roll animation: 0 = plain landing animation, 1 = the full roll", 0, 1)
 CreateConVar("Beatrun_RollAlways", "1", REP, "Always play the roll animation when the safety roll triggers (0 = plain landing animation when the player is standing still)", 0, 1)
 
@@ -59,6 +62,7 @@ if SERVER then
 	util.AddNetworkString("Beatrun_ZC_SlideStart")
 	util.AddNetworkString("Beatrun_ZC_SlideEnd")
 	util.AddNetworkString("Beatrun_ZC_RollStart")
+	util.AddNetworkString("Beatrun_ZC_SlideAim")
 end
 
 function BeatrunIsZCity()

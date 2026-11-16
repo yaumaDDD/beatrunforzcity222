@@ -3,7 +3,7 @@
 Аддон для Garry's Mod: слайд из Beatrun и страховочный перекат при падении для гейммода **Z-City (Homigrad)**.
 Ничего в `beatrun.7z` / гейммоде не редактируется — всё ставится отдельным аддоном.
 
-**Версия:** 2.21.0
+**Версия:** 2.21.6
 
 ---
 
@@ -11,8 +11,8 @@
 
 ### Вариант 1 — готовый архив (проще)
 
-1. Скачать `beatrun_zcity_addon.zip`:
-   <https://github.com/yaumaDDD/beatrunforzcity/raw/arena/cc40ee8a-beatrunforzcity/beatrun_zcity_addon.zip>
+1. Скачать `beatrun_zcity_2.21.6.zip`:
+   <https://github.com/yaumaDDD/beatrunforzcity222/raw/arena/478a8db2-beatrunforzcity222/beatrun_zcity_2.21.6.zip>
 2. Распаковать так, чтобы получилось:
    ```
    garrysmod/addons/beatrun_zcity/
@@ -22,7 +22,7 @@
        sound/
        resource/
    ```
-3. Перезапустить игру / сервер. В консоли должно появиться `BeatrunZCity 2.21.0`.
+3. Перезапустить игру / сервер. В консоли должно появиться `[Beatrun Z-City] version 2.21.6`.
 
 ### Вариант 2 — прямо из репозитория
 
@@ -92,6 +92,60 @@ if IsValid(ply.FakeRagdoll) or BeatrunIsThirdPerson(ply) then return end
 играет слайд или страховочный перекат**, в том числе в третьем лице. Когда трюк заканчивается,
 камера плавно (лерп) возвращается на обычную камеру Z-City — то есть переключение происходит
 ровно на момент выполнения трюка, а не постоянно.
+
+### 2.21.5 — совместимость с Z-City Big Appearance и перчатками (`zcity_csgo_gloves`), фикс пропадания рук с куртками
+
+Исправлены причины, из-за которых при совместной работе `beatrun_zcity` и `z_city_big_appearance1` (`Appearance Mod` + `zcity_csgo_gloves`) с перчатками и определёнными куртками могли пропадать руки или схлопываться предплечья:
+- Новый клиентский модуль совместимости `lua/beatrun_zcity/cl/01_bigappearance_compat.lua`:
+  - **Чистое копирование субматериалов (`0..31`):** `CopyModelAppearance` больше никогда не копирует скрывающий материал перчаток `ZCG.HideMaterial()` (`"null"` / `"zcity_csgo_gloves/invisible"`) с игрока на `BodyAnimMDL` и `BodyAnimMDLarm` — вместо него восстанавливается оригинальный пред-скрытый материал из `ZCGloves.States` (при этом заглавный `"NULL"` от брони Z-City `ent_zcity_equipment_base` сохраняется нетронутым). Исправлено пропадание рук в первый кадр слайда (`notReady`), на короткорукавных куртках (`sheet_tshirt_m/f`, `tanktop_f`, `male_standart_tshirt`), на куртках с общим материалом (`SlotShared`) и в режиме `Beatrun_ZCity_SlideWeapon 0`.
+  - **Покадровая синхронизация внешности и курток:** `BodyAnimMDL` и `BodyAnimMDLarm` каждый кадр синхронизируют `skin`, бодигруппы (`sheet`, `TORSO`, `HANDS` включая `handsfortshirt`), `zcg_glove`, `organism` и чистые субматериалы (при смене куртки/перчатки старые скрытия сбрасываются мгновенно, а при смене модели игрока модель трюка пересобирается).
+  - **Защита от осиротевших `"null"` слотов:** неинвазивная обёртка над `CoolPostDrawAppearance["zcg_gloves"]` (с сохранением приоритета `ZCGloves.HookOrder.draw` для стандартного `hook`, ULib и Srlion) и санитизация в `BeatrunRestoreStaticPlayerModel` немедленно возвращают слот рук, если `"null"` остался без активного `state.hide`/`state.more` (или если куртка/перчатки не должны скрывать материал рук).
+  - **Защита helper-костей предплечья на моделях Appearance Mod (`models/slav/...`):** когда `ZCGloves` вызывает `shrinkHands` на не-футболочной куртке (`SlotShared` / непрочитанный меш / `zcg_whole_hands 0`), не-пальцевые helper-кости под `L/R_Hand` восстанавливаются прямо перед `DrawModel()` с сохранением маркера для `growHands` в `PostDrawAppearance`, чтобы предплечья не схлопывались.
+  - **Изоляция `SnatchModelInstance` и поддержка `SlideWeapon 0`:** при активном `ZCGloves` отключается `SnatchModelInstance` (исключена утечка `"null"` и костных правок с `BodyAnimMDL` на модель игрока), а для `BodyAnimMDLarm` при `Beatrun_ZCity_SlideWeapon 0` запускаются только хуки перчаток `zcg_gloves` без бронежилетов в воздухе.
+- В `beatrun_zcity_debug` добавлена строка диагностики `big appearance/ZCG`.
+
+### 2.21.4 — исключены все melee SWEP-ы из подката с оружием
+
+Все оружие ближнего боя (melee SWEP-ы) теперь исключено из вооружённого режима подката и обрабатывается так же, как безоружный подкат с кулаками:
+- Добавлена общая проверка `BeatrunIsMeleeWeapon` / `BeatrunIsSlideWeapon` (`lua/beatrun_zcity/sh/02_helpers.lua`), отсекающая все Z-City melee свепы (`weapon_melee` и все наследники с `ismelee`/`ismelee2`/`Base = "weapon_melee"`/`Category = "Weapons - Melee"` — ножи, топоры, биты, ломы, кувалды, копья, щит и т.д.), `weapon_hands_sh`, `weapon_hg_coolhands`, ванильные HL2 melee (`weapon_crowbar`, `weapon_stunstick`, `weapon_fists`) и сторонние melee-паки (`tfa_melee_base`, `arccw_base_melee`, `arc9_base_melee`, `cw_melee_base`, `mg_melee_base`, `HoldType` `melee`/`melee2`/`knife`/`fist`), не затрагивая огнестрел (`homigrad_base` и др.).
+- При подкате с melee SWEP не включается вооружённый режим (`_BRZSlideArmed = false`), не рисуется melee-свеп поверх подката и не запускается TPIK правой руки — проигрывается чистая анимация обычного подката.
+
+### 2.21.3 — ограничение поворота с оружием в слайде (±90° влево и вправо)
+
+Добавлено ограничение горизонтального поворота головы и прицела во время подката с оружием, чтобы персонаж не мог «сломать себе шею» и стрелять себе за спину:
+- Новый реплицируемый ConVar `Beatrun_ZCity_SlideYawLimit` (по умолчанию `90` градусов — порог ±90° влево и вправо от направления скольжения; `0` отключает ограничение; также доступен админу в меню настроек).
+- Плавный упор прямо в системе мыши Z-City (`HG.InputMouseApply`, до `ViewPunch3/4` и поворота угла) — без рывков, без лишней тряски при упоре в границу и с мгновенным свободным выходом обратно к центру (без залипания мыши), корректно работает через переход `±180°` и при резком взмахе мышью.
+- Дублирующая страховка в `CreateMove`, `InputMouseApply` и общем `StartCommand` (перехватывает повороты с клавиатуры `+left/+right`, отдачу и клиент-серверный рассинхрон), а также проверка сектора стрельбы на сервере в `Beatrun_ZC_SlideAim`.
+- При выходе из подката ограничение сразу снимается. Камера `Beatrun_TrickCam*` и механики Z-City не затронуты.
+
+### 2.21.2 — оружие в одной правой руке самой анимации, левая не трогается, пули по стволу
+
+В `2.21.1` оружие появилось и начало двигаться за мышью, но остались три проблемы:
+- Z-City TPIK тянул на пистолет **обе руки** (левую тоже выдёргивало из позы подката), а ствол сидел слишком низко в центре живота/ног;
+- разделение модели на два обрезанных меша (`BodyAnimMDL` с нулевыми руками + `BodyAnimMDLarm` с нулевым торсом) рвало вершины рукава при работе TPIK (артефакт чёрного треугольника справа);
+- пули и вспышка выстрела всё ещё летели от обычной высоты глаз `ply:EyePos()` и серверного `WorldModel_Transform`, а не от нарисованного ствола в правой руке.
+
+Что исправлено:
+- **Единая модель тела `BodyAnimMDL`:** на стандартных ValveBiped-моделях руки больше не вырезаются с `BodyAnimMDL` — плечо, рукав и кисть остаются единым цельным мешем без швов и оторванных полигонов (скрывается только голова).
+- **Только одна правая рука:** в `ApplySlideWeaponTPIK` принудительно отключается левый IK (`setlhik = false`, `setlh = false`, `lhandik = false`, `ply.lerp_lh = 0` с мгновенным восстановлением сразу после `DoTPIK`) — левая рука остаётся в позе анимации слайда, а за мышью движется и держит оружие **только правая рука**.
+- **Посадка в правой руке с ограничением длины руки:** в одноручной стойке от бедра оружие вынесено правее и выше корпуса/ног по линии правого плеча, а точка хвата зажата в реальный радиус правой руки от кости `ValveBiped.Bip01_R_UpperArm` — ствол не клипит в живот и не отрывается от кисти при резких поворотах.
+- **Пули и вспышка строго по направлению правой руки:** после отрисовки оружия считается точная точка и вектор дула (`LocalMuzzlePos/Ang`), клиент синхронизирует их на сервер (`Beatrun_ZC_SlideAim` с проверками расстояния, угла и стен), а общий хук `EntityFireBullets` (`BeatrunZCity_SlideBulletAim`) перенаправляет `data.Src` и `data.Dir` (не трогая рикошеты/пробития) и держит `worldModel` на позиции ствола для вспышки выстрела.
+- Камера (`Beatrun_TrickCam*`) и механики Z-City (`hg.organism`, `hg.Fake`) по-прежнему не тронуты.
+
+### 2.21.1 — исправлена отрисовка оружия и ведение рук за мышью в подкате
+
+В `2.21.0` оставались две причины, из-за которых игрок в подкате всё равно «стрелял из пустой руки», а сама рука не шла за прицелом:
+
+1. `ply.RenderOverride` во время подката вообще не вызывался: аддон ставил `ply:SetNoDraw(true)`, `view.drawviewer = false`, `ShouldDrawLocalPlayer -> false` и `PrePlayerDraw -> true`. Даже при вызове `DrawPlayerRagdoll` локальное оружие Z-City (`localdraw`) пропускалось, а `SWEP:Camera` заранее перезаписывал `wm:SetRenderOrigin/SetRenderAngles`.
+2. Руки (`BodyAnimMDLarm`) рисовались в `PostDrawOpaqueRenderables` просто приклеенными через `EF_BONEMERGE` к статичной позе `meslideloop` без TPIK.
+
+Что сделано:
+- Отрисовка оружия Z-City перенесена прямо в `PostDrawOpaqueRenderables` (`BeatrunZCity_DrawBodyAnim`) перед отрисовкой `BodyAnimMDLarm` (в том же `cam.IgnoreZ` и порядке, что у Z-City: ствол → обвесы → TPIK рук → модель рук).
+- Для огнестрела (`wpn.WorldModel_Transform`) обновляются кости (`ply:SetupBones()`, `BodyAnim:SetupBones()`), считается `WorldModel_Transform(true, false, wm)` без фиксации прицела на голове (свободное наведение мышью), позиция переносится на высоту глаз слайд-камеры/головы рига, выставляются `SetRenderOrigin/Angles` + `SetPos/Angles`, синхронизируется цикл фейк-модели и рисуются `wm:DrawModel()` + `wpn:DrawAttachments()`. Для ближнего боя / TPIK-предметов (`wpn.DrawWorldModel2`) вызывается `DrawWorldModel2`.
+- Перед отрисовкой `BodyAnimMDLarm` (у которого та же модель и те же индексы костей, что у `ply`) вызываются `wpn:SetHandPos()` (с временной подстановкой `ply.FakeRagdoll`/`ply.OldRagdoll = BodyAnimMDLarm` внутри `pcall` и мгновенным возвратом) и `hg.DoTPIK(ply, BodyAnimMDLarm)` каждый кадр — обе руки хватают оружие и плавно идут за мышью.
+- В `BeatrunSlideAnimStart` синхронизируется `ply._BRZSlideArmed`, чтобы в мультиплеере свободное прицеливание не залипало.
+- В `beatrun_zcity_debug` добавлена строка `slide weapon draw` / `TPIK` / `worldModel`.
+- Камера (`Beatrun_TrickCam*`) и механики Z-City (`hg.organism`, `hg.Fake`) не тронуты.
 
 ### 2.21.0 — оружие в руке рисует сам Z-City (на нашем риге)
 
@@ -1092,6 +1146,8 @@ beatrun_zcity_debug
 | `Beatrun_TrickCamHeight` | `45` | Высота камеры над персонажем в режиме третьего лица |
 | `Beatrun_TrickCamDrawBody` | `0` | Рисовать тело в режиме от первого лица |
 | `Beatrun_ZCity_SlideAutoHold` | `1` | Слайд идёт сам до конца после одного нажатия комбинации |
+| `Beatrun_ZCity_SlideAirCheck` | `1` | Автоматически прекращать слайд, когда под игроком заканчивается поверхность / обрыв |
+| `Beatrun_ZCity_RollHolster` | `1` | Автоматически убирать любое оружие в пустые руки во время страховочного переката |
 | `Beatrun_ZCity_DebugHUD` | `1` | Панель диагностики камеры/трюка на экране |
 
 ---

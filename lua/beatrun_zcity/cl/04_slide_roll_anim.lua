@@ -4,6 +4,7 @@
 local cvAnimSet = GetConVar("Beatrun_AnimSet")
 local cvRollAlways = GetConVar("Beatrun_RollAlways")
 local cvRollAnim = GetConVar("Beatrun_RollAnim")
+local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 local cvCamLock = GetConVar("Beatrun_TrickCamLockAng")
 
 local function GetRigName()
@@ -78,6 +79,11 @@ function BeatrunSlideAnimStart()
 		return
 	end
 
+	-- Sync the slide-start armed flag here as well so multiplayer net-triggered slides always know
+	-- whether the slide started armed even if client SetupMove prediction skipped the start tick.
+	local activeWep = ply:GetActiveWeapon()
+	ply._BRZSlideArmed = BeatrunIsSlideWeapon(activeWep)
+
 	local slippery = ply:GetSlidingSlippery()
 	local slideAng = ply:GetSlidingAngle()
 
@@ -104,27 +110,31 @@ function BeatrunSlideAnimStart()
 	hook.Add("Think", "BeatrunZCity_SlideAnimThink", SlideAnimThink)
 end
 
-function BeatrunSlideAnimEnd(slippery, blocked)
+function BeatrunSlideAnimEnd(slippery, blocked, fellOff)
 	local ply = LocalPlayer()
 	hook.Remove("Think", "BeatrunZCity_SlideAnimThink")
 	CamShake = false
 
 	if not IsValid(BodyAnim) then
 		slideState = "idle"
+		if fellOff then slideHandled = false end
 		return
 	end
 
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then
 		slideState = "idle"
+		slideHandled = false
 		RemoveBodyAnim(false)
 		return
 	end
 
 	slideState = "ending"
 
-	if slippery then
-		-- Slide jump or steep slope exit: immediately smooth-lerp camera back to Z-City
+	if slippery or fellOff then
+		-- Slide jump, steep slope exit, or sliding off a ledge: immediately smooth-lerp camera
+		-- back to Z-City instead of playing a grounded stand-up animation in mid-air.
 		slideState = "idle"
+		if fellOff then slideHandled = false end
 		RemoveBodyAnim(true)
 		return
 	end
@@ -192,8 +202,20 @@ function BeatrunRollAnimStart(isLandInPlace)
 		isLandInPlace = false
 	end
 
-	local wep = ply:GetActiveWeapon()
-	local holdingWeapon = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh"
+	local holster = not cvRollHolster or cvRollHolster:GetBool()
+	local holdingWeapon = false
+	if holster then
+		-- Immediately switch client weapon selection to bare hands to match server-side holstering
+		if ply.GetWeapon and input and isfunction(input.SelectWeapon) then
+			local hands = ply:GetWeapon("weapon_hands_sh") or ply:GetWeapon("weapon_hands") or ply:GetWeapon("gmod_hands")
+			if IsValid(hands) and ply:GetActiveWeapon() ~= hands then
+				pcall(input.SelectWeapon, hands)
+			end
+		end
+	else
+		local wep = ply:GetActiveWeapon()
+		holdingWeapon = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh"
+	end
 
 	-- Beatrun_RollAnim 0 = plain landing animation, 1 = the actual roll
 	local useRoll = not (cvRollAnim and cvRollAnim:GetInt() == 0)
@@ -283,7 +305,8 @@ end)
 net.Receive("Beatrun_ZC_SlideEnd", function()
 	local blocked = net.ReadBool()
 	local slippery = net.ReadBool()
-	BeatrunSlideAnimEnd(slippery, blocked)
+	local fellOff = net.ReadBool()
+	BeatrunSlideAnimEnd(slippery, blocked, fellOff)
 end)
 
 net.Receive("Beatrun_ZC_RollStart", function()
@@ -299,7 +322,8 @@ if game.SinglePlayer() then
 	net.Receive("sliding_spend", function()
 		local blocked = net.ReadBool()
 		local slippery = net.ReadBool()
-		BeatrunSlideAnimEnd(slippery, blocked)
+		local fellOff = net.ReadBool()
+		BeatrunSlideAnimEnd(slippery, blocked, fellOff)
 	end)
 
 	net.Receive("RollAnimSP", function()
