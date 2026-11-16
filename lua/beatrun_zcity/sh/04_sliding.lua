@@ -5,6 +5,13 @@ local qslide_duration = 1.15
 local cvSlideEnabled = GetConVar("Beatrun_ZCity_SlideEnabled")
 local cvSlideMinSpeed = GetConVar("Beatrun_ZCity_SlideMinSpeed")
 local cvAutoHold = GetConVar("Beatrun_ZCity_SlideAutoHold")
+local cvSlideYawLimit = GetConVar("Beatrun_ZCity_SlideYawLimit")
+
+function BeatrunGetSlideYawLimit()
+	local limit = cvSlideYawLimit and cvSlideYawLimit:GetFloat() or 90
+	if limit <= 0 or limit >= 180 then return 0 end
+	return math.Clamp(limit, 5, 179)
+end
 
 local slide_sounds = {
 	[0] = { "Slide.Concrete" },
@@ -427,6 +434,29 @@ BeatrunAddOrderedHook("StartCommand", "zz_BeatrunZCity_SlideCmd", function(ply, 
 		cmd:RemoveKey(IN_SPEED)
 		cmd:ClearMovement()
 
+		-- Limit horizontal look/aim rotation relative to the slide direction while armed so the
+		-- player cannot snap their neck 180 degrees and shoot behind their own back.
+		local limit = BeatrunGetSlideYawLimit()
+		if limit > 0 then
+			local wep = ply:GetActiveWeapon()
+			local armed = ply._BRZSlideArmed or (IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh")
+			if armed then
+				local slideAng = ply:GetSlidingAngle()
+				if isangle(slideAng) then
+					local effLimit = SERVER and math.min(180, limit + 5) or limit
+					local ang = cmd:GetViewAngles()
+					local diff = math.AngleDifference(ang.y, slideAng.y)
+					if diff > effLimit then
+						ang.y = math.NormalizeAngle(slideAng.y + effLimit)
+						cmd:SetViewAngles(ang)
+					elseif diff < -effLimit then
+						ang.y = math.NormalizeAngle(slideAng.y - effLimit)
+						cmd:SetViewAngles(ang)
+					end
+				end
+			end
+		end
+
 		local slidetime = math.max(0.1, qslide_duration)
 		local autohold = cvAutoHold and cvAutoHold:GetBool()
 		if autohold or ((ply:GetSlidingTime() - CurTime()) / slidetime > 0.8 and ((ply.SlidingInitTime or 0) > CurTime() - 0.25 or ply:GetSlidingSlippery())) then
@@ -469,10 +499,20 @@ if SERVER then
 		if len < 0.01 then return end
 		mdir = mdir * (1 / len)
 
-		-- Anti-exploit bounds: muzzle must stay near the sliding player and roughly aligned with real aim.
+		-- Anti-exploit bounds: muzzle must stay near the sliding player, aligned with real aim,
+		-- and within the allowed left/right slide yaw cone (cannot shoot behind own back).
 		local anchor = ply:GetPos() + Vector(0, 0, 24)
 		if (mpos - anchor):LengthSqr() > 128 * 128 then return end
 		if mdir:Dot(ply:GetAimVector()) < 0.15 then return end
+
+		local limit = BeatrunGetSlideYawLimit()
+		if limit > 0 and mdir:Length2D() > 0.15 then
+			local slideAng = ply:GetSlidingAngle()
+			if isangle(slideAng) then
+				local yawDiff = math.abs(math.AngleDifference(mdir:Angle().y, slideAng.y))
+				if yawDiff > math.min(180, limit + 18) then return end
+			end
+		end
 
 		ply._BRZSlideMuzzlePos = mpos
 		ply._BRZSlideMuzzleDir = mdir

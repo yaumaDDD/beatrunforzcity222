@@ -1493,9 +1493,81 @@ concommand.Add("beatrun_zcity_camtest", function()
 	print("[Beatrun Z-City] if the camera does not move, the camera stack ignores CalcView.")
 end)
 
+local function GetArmedSlideYawConstraint(ply)
+	if not IsValid(ply) or not ply:Alive() or not ply:GetSliding() then return nil, 0 end
+	if not BeatrunCanSlideOrRoll(ply) then return nil, 0 end
+	if not (ply._BRZSlideArmed or BeatrunWeaponArmed(ply)) then return nil, 0 end
+
+	local limit = isfunction(BeatrunGetSlideYawLimit) and BeatrunGetSlideYawLimit() or 90
+	if limit <= 0 then return nil, 0 end
+
+	local slideAng = ply.GetSlidingAngle and ply:GetSlidingAngle() or nil
+	local baseYaw = (isangle(slideAng) and slideAng.y)
+		or (IsValid(BodyAnim) and BodyAnim:GetAngles().y)
+		or (isangle(ply.OrigEyeAng) and ply.OrigEyeAng.y)
+	if not isnumber(baseYaw) then return nil, 0 end
+
+	return baseYaw, limit
+end
+
+-- Primary Z-City mouse limit hook: runs inside Z-City's InputMouseApply ("fakeCameraAngles") BEFORE
+-- ViewPunch3/4 and before `angle.yaw = angle.yaw - x / 50`, so hitting +/-90 deg feels like a clean
+-- smooth stop with zero sticking when turning back toward center and zero phantom wall-sway.
+BeatrunAddOrderedHook("HG.InputMouseApply", "aa_BeatrunZCity_SlideYawLimit", function(tbl)
+	if not istable(tbl) or not isangle(tbl.angle) then return end
+	if lockang then return end
+
+	local ply = LocalPlayer()
+	local baseYaw, limit = GetArmedSlideYawConstraint(ply)
+	if not baseYaw then return end
+
+	local curYaw = tbl.angle.yaw
+	local curDiff = math.AngleDifference(curYaw, baseYaw) -- >0 left, <0 right
+	local x = tbl.x or 0
+	local step = -x / 50 -- Z-City applies angle.yaw = angle.yaw - x / 50
+
+	if curDiff > limit then
+		if step > 0 then tbl.x = 0 end
+		tbl.angle.yaw = math.NormalizeAngle(baseYaw + limit)
+	elseif curDiff < -limit then
+		if step < 0 then tbl.x = 0 end
+		tbl.angle.yaw = math.NormalizeAngle(baseYaw - limit)
+	else
+		local nextDiff = curDiff + step
+		if nextDiff > limit then
+			tbl.x = -(limit - curDiff) * 50
+		elseif nextDiff < -limit then
+			tbl.x = -(-limit - curDiff) * 50
+		end
+	end
+end, "HOOK_HIGH")
+
 hook.Add("CreateMove", "BeatrunZCity_BodyAnimMouse", function(cmd)
 	local ply = LocalPlayer()
-	if not IsValid(ply) or not IsValid(BodyAnim) or lockang or not ply.OrigEyeAng
+	if not IsValid(ply) then
+		pastlimitx = false
+		pastlimity = false
+		BodyAnimLimitEase = false
+		return
+	end
+
+	-- Armed slide horizontal turn cone (+/-90 deg by default): always enforced while sliding with a
+	-- weapon so keyboard turns (+left/+right), non-Z-City input, recoil or inverted mouse cannot
+	-- twist the player behind their own back.
+	local slideBaseYaw, slideYawLimit = GetArmedSlideYawConstraint(ply)
+	if slideBaseYaw and not lockang then
+		local nang = cmd:GetViewAngles()
+		local diff = math.AngleDifference(nang.y, slideBaseYaw)
+		if diff > slideYawLimit then
+			nang.y = math.NormalizeAngle(slideBaseYaw + slideYawLimit)
+			cmd:SetViewAngles(nang)
+		elseif diff < -slideYawLimit then
+			nang.y = math.NormalizeAngle(slideBaseYaw - slideYawLimit)
+			cmd:SetViewAngles(nang)
+		end
+	end
+
+	if not IsValid(BodyAnim) or lockang or not ply.OrigEyeAng
 		or (cvCamLimits and not cvCamLimits:GetBool()) then
 		pastlimitx = false
 		pastlimity = false
@@ -1507,6 +1579,9 @@ hook.Add("CreateMove", "BeatrunZCity_BodyAnimMouse", function(cmd)
 	local oang = ply.OrigEyeAng
 	local limitx = BodyLimitX or 40
 	local limity = BodyLimitY or 80
+	if slideBaseYaw and slideYawLimit > 0 and slideYawLimit < limity then
+		limity = slideYawLimit
+	end
 
 	pastlimitx = math.AngleDifference(nang.x, oang.x) > limitx
 	pastlimity = math.abs(math.AngleDifference(nang.y, oang.y)) > limity
@@ -1528,9 +1603,9 @@ hook.Add("CreateMove", "BeatrunZCity_BodyAnimMouse", function(cmd)
 
 	if pastlimity then
 		if math.AngleDifference(nang.y, oang.y) < 0 then
-			nang.y = BodyAnimLimitEase and math.ApproachAngle(nang.y, oang.y - limity, FrameTime() * 300) or (oang.y - limity)
+			nang.y = BodyAnimLimitEase and math.ApproachAngle(nang.y, oang.y - limity, FrameTime() * 300) or math.NormalizeAngle(oang.y - limity)
 		else
-			nang.y = BodyAnimLimitEase and math.ApproachAngle(nang.y, oang.y + limity, FrameTime() * 300) or (oang.y + limity)
+			nang.y = BodyAnimLimitEase and math.ApproachAngle(nang.y, oang.y + limity, FrameTime() * 300) or math.NormalizeAngle(oang.y + limity)
 		end
 		cmd:SetViewAngles(nang)
 	elseif not pastlimitx then
@@ -1541,29 +1616,50 @@ hook.Add("CreateMove", "BeatrunZCity_BodyAnimMouse", function(cmd)
 	lastlimity = limity
 end)
 
-BeatrunAddOrderedHook("InputMouseApply", "zz_BeatrunZCity_BodyAnimMouse", function(cmd)
+BeatrunAddOrderedHook("InputMouseApply", "zz_BeatrunZCity_BodyAnimMouse", function(cmd, x, y, ang)
+	local ply = LocalPlayer()
+
+	if IsValid(BodyAnim) and lockang then
+		cmd:SetMouseX(0)
+		cmd:SetMouseY(0)
+		return true
+	end
+
+	-- Fallback for non-Z-City environments where HG.InputMouseApply is not invoked.
+	local slideBaseYaw, slideYawLimit = GetArmedSlideYawConstraint(ply)
+	if slideBaseYaw and isangle(ang) then
+		local curDiff = math.AngleDifference(ang.y, slideBaseYaw)
+		local mx = x or 0
+		local step = -mx * 0.022
+		local nextDiff = curDiff + step
+		if nextDiff > slideYawLimit or nextDiff < -slideYawLimit then
+			local targetDiff = math.Clamp(nextDiff, -slideYawLimit, slideYawLimit)
+			ang.y = math.NormalizeAngle(slideBaseYaw + targetDiff)
+			ang.p = math.Clamp(ang.p + (y or 0) * 0.022, -89, 89)
+			cmd:SetViewAngles(ang)
+			return true
+		end
+	end
+
 	if not IsValid(BodyAnim) then
 		pastlimitx = false
 		pastlimity = false
 		return
 	end
 
-	if lockang then
-		cmd:SetMouseX(0)
-		cmd:SetMouseY(0)
-		return true
-	end
-
 	if cvCamLimits and not cvCamLimits:GetBool() then return end
 
 	local clamped = false
-	if pastlimitx then
+	if pastlimitx and (y or 0) > 0 then
 		cmd:SetMouseY(0)
 		clamped = true
 	end
-	if pastlimity then
-		cmd:SetMouseX(0)
-		clamped = true
+	if pastlimity and isangle(ang) and IsValid(ply) and isangle(ply.OrigEyeAng) then
+		local diff = math.AngleDifference(ang.y, ply.OrigEyeAng.y)
+		if (diff > 0 and (x or 0) < 0) or (diff < 0 and (x or 0) > 0) then
+			cmd:SetMouseX(0)
+			clamped = true
+		end
 	end
 	if clamped then return true end
 end, "HOOK_LOW")

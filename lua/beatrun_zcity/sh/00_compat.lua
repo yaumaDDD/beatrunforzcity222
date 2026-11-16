@@ -20,6 +20,7 @@ CreateConVar("Beatrun_ZCity_RollMinSpeed", "250", REP, "Minimum fall speed at wh
 CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether the roll accepted them", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideSteer", "0", REP, "Allow changing the slide course with strafe keys (0 = course is fixed)", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideShoot", "1", REP, "Allow free aiming and shooting during a slide", 0, 1)
+CreateConVar("Beatrun_ZCity_SlideYawLimit", "90", REP, "Maximum left/right look and aim angle (degrees) relative to slide direction while sliding with a weapon (0 = unlimited)", 0, 180)
 CreateConVar("Beatrun_RollAnim", "0", REP, "Safety roll animation: 0 = plain landing animation, 1 = the full roll", 0, 1)
 CreateConVar("Beatrun_RollAlways", "1", REP, "Always play the roll animation when the safety roll triggers (0 = plain landing animation when the player is standing still)", 0, 1)
 

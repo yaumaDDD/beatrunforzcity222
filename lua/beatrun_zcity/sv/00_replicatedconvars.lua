@@ -11,6 +11,7 @@ local ALLOWED_CONVARS = {
 	["beatrun_rollspeedloss"] = true,
 	["beatrun_rollalways"] = true,
 	["beatrun_zcity_slideautohold"] = true,
+	["beatrun_zcity_slideyawlimit"] = true,
 	["beatrun_rollanim"] = true,
 }
 
