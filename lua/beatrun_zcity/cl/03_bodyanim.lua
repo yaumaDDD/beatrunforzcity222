@@ -6,7 +6,7 @@ local cvAnimSet = GetConVar("Beatrun_AnimSet")
 local cvCamTilt = GetConVar("Beatrun_SlideCamTilt")
 local cvHideBody = GetConVar("Beatrun_SlideHideBody")
 local cvTrickCam = GetConVar("Beatrun_TrickCam")
-local cvRollCam = GetConVar("Beatrun_RollCam")
+local cvRollCam = GetConVar("Beatrun_RollCamMode")
 local cvTrickCamOffset = GetConVar("Beatrun_TrickCamOffset")
 local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 
@@ -33,6 +33,10 @@ local function BeatrunWeaponArmed(ply)
 end
 
 local cvTrickCamUp = GetConVar("Beatrun_TrickCamUp")
+
+-- How far the view sinks during a knee landing, world units (2.21.30). Beatrun's land drops the camera
+-- with the body; this is the part the pose alone does not guarantee on every player model.
+local KNEE_LAND_DIP = 16
 local cvTrickCamAnchor = GetConVar("Beatrun_TrickCamAnchor")
 local cvTrickCamMatchEye = GetConVar("Beatrun_TrickCamMatchEye")
 local cvCamLimits = GetConVar("Beatrun_TrickCamLimits")
@@ -1172,7 +1176,7 @@ local function IsRollSequence(name)
 end
 
 -- Beatrun runs both the roll and the knee landing ("land") through the same locked animation camera,
--- so by default both get it. Beatrun_RollCam 2 keeps the free look on the knee landing.
+-- so by default both get it. Beatrun_RollCamMode 2 keeps the free look on the knee landing.
 local function ShouldUseRollCam(name)
 	if not isstring(name) then return false end
 	local mode = cvRollCam and cvRollCam:GetInt() or 1
@@ -1230,6 +1234,21 @@ local function ApplyRollCameraToView(ply, view)
 	local up = cvTrickCamUp and cvTrickCamUp:GetFloat() or 0
 	local flatEye = Angle(0, ply:EyeAngles().y, 0)
 	local pos = Vector(att.Pos) + flatEye:Forward() * offset + Vector(0, 0, up)
+
+	-- 2.21.30: the knee landing has to LOOK like a landing. The rig's eyes attachment gives most of it,
+	-- but how far the head really drops depends on the model and the pose, so the view is dipped by a
+	-- fixed amount over the middle of the pose (sin curve: down on the way down, back up at the end) -
+	-- the same "the camera sinks with you" feeling Beatrun's land has. Only for the knee landing; the
+	-- roll gets its motion from the animation itself.
+	if isstring(BodyAnimString) and (BodyAnimString == "land" or BodyAnimString == "landgun") then
+		local cycle = 0
+		if isfunction(BodyAnim.GetCycle) then
+			local c = BodyAnim:GetCycle()
+			if isnumber(c) then cycle = math.Clamp(c, 0, 1) end
+		end
+		local dip = math.sin(cycle * math.pi) * KNEE_LAND_DIP
+		if dip > 0 then pos.z = pos.z - dip end
+	end
 
 	-- Beatrun lerps the lock in (lerplockang, FrameTime() * 4.5) from the eye angles of the frame the
 	-- roll started in. Same here, so the first frames of the roll do not snap the view.
