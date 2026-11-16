@@ -6,6 +6,7 @@ local cvAnimSet = GetConVar("Beatrun_AnimSet")
 local cvCamTilt = GetConVar("Beatrun_SlideCamTilt")
 local cvHideBody = GetConVar("Beatrun_SlideHideBody")
 local cvTrickCam = GetConVar("Beatrun_TrickCam")
+local cvRollCam = GetConVar("Beatrun_RollCam")
 local cvTrickCamOffset = GetConVar("Beatrun_TrickCamOffset")
 local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 
@@ -92,6 +93,11 @@ local lastTrickCamPos = nil
 local lerpchangeatt = 1
 local lastatt = nil
 local savedatt = nil
+
+-- Safety-roll camera state (Beatrun's lockang logic: the view is lerped from where you were looking
+-- into the animation's CameraJoint and locked there for the whole roll).
+local rollCamLerp = 1
+local rollCamStartAng = nil
 
 local BodyAnimPosEase = Vector(0, 0, 0)
 local BodyAnimPosEaseLerp = 1
@@ -525,6 +531,10 @@ function StartBodyAnim(animtable)
 
 	attach = nil
 	endlerp = 0
+
+	-- every new animation starts its own camera lock lerp
+	rollCamLerp = 1
+	rollCamStartAng = nil
 end
 
 -- The animated body is drawn in first person AND in third person. In third person the engine would draw
@@ -1104,6 +1114,118 @@ local function GetAnimCamAngles(mode)
 	return Angle(0, BodyAnim:GetAngles().y, 0), "rig yaw"
 end
 
+-- "meroll", "merollgun", "merollcrouch", "merollguncrouch", "evaderoll"...
+local function IsRollSequence(name)
+	if not isstring(name) then return false end
+	return string.find(name, "roll", 1, true) ~= nil
+end
+
+-- Beatrun runs both the roll and the knee landing ("land") through the same locked animation camera,
+-- so by default both get it. Beatrun_RollCam 2 keeps the free look on the knee landing.
+local function ShouldUseRollCam(name)
+	if not isstring(name) then return false end
+	local mode = cvRollCam and cvRollCam:GetInt() or 1
+	if mode == 0 then return false end
+	if IsRollSequence(name) then return true end
+	if mode == 2 then return false end
+	return name == "land" or name == "landgun"
+end
+
+function BeatrunResetRollCam()
+	rollCamLerp = 1
+	rollCamStartAng = nil
+end
+
+-- ===========================================================================
+-- Safety roll camera - Beatrun's roll camera, one to one.
+-- Beatrun starts its roll with `lockang = true` on the BodyAnim table: the view rides the rig's
+-- CameraJoint attachment and its angles are locked to that joint (lerped in from where you were
+-- already looking), so the camera drops with the body, rolls over and comes back up instead of
+-- sliding along at eye height. That is exactly what this does.
+-- "Our" part is only the numbers: the same Beatrun_TrickCamOffset/Beatrun_TrickCamUp the rest of the
+-- trick camera uses, our rig scale and our eye height.
+-- ===========================================================================
+local function ApplyRollCameraToView(ply, view)
+	if not IsValid(BodyAnim) then return false end
+	if not ShouldUseTrickCam(ply) or GetTrickCamMode() ~= 0 then return false end
+
+	BodyAnim:SetupBones()
+
+	-- Beatrun's roll animation table does not set camjoint, so its roll camera sits on the rig's
+	-- "eyes" attachment; the slide is the one that uses "CameraJoint". Same order here.
+	local att
+	for _, name in ipairs({ "eyes", "CameraJoint", camjoint }) do
+		if isstring(name) then
+			local attId = BodyAnim:LookupAttachment(name)
+			if attId and attId > 0 then
+				local data = BodyAnim:GetAttachment(attId)
+				if data and data.Pos then
+					att = { Pos = data.Pos, Ang = data.Ang, Name = name }
+					break
+				end
+			end
+		end
+	end
+
+	-- No attachment on this rig: fall back to the head bone, never to the player's own eyes - the
+	-- whole point is that the camera is part of the animation.
+	if not att then
+		local headPos, headAng = GetTrickCamAttachment()
+		if headPos then att = { Pos = headPos, Ang = headAng, Name = "bone:head" } end
+	end
+	if not att or not att.Pos then return false end
+
+	local offset = cvTrickCamOffset and cvTrickCamOffset:GetFloat() or 0
+	local up = cvTrickCamUp and cvTrickCamUp:GetFloat() or 0
+	local flatEye = Angle(0, ply:EyeAngles().y, 0)
+	local pos = Vector(att.Pos) + flatEye:Forward() * offset + Vector(0, 0, up)
+
+	-- Beatrun lerps the lock in (lerplockang, FrameTime() * 4.5) from the eye angles of the frame the
+	-- roll started in. Same here, so the first frames of the roll do not snap the view.
+	if not isangle(rollCamStartAng) then
+		rollCamStartAng = Angle(ply:EyeAngles())
+		rollCamLerp = 0
+	end
+	if rollCamLerp < 1 then
+		rollCamLerp = math.Approach(rollCamLerp, 1, math.max(RealFrameTime(), FrameTime()) * 4.5)
+	end
+
+	local ang = Angle(att.Ang)
+	if rollCamLerp < 1 then
+		ang = LerpAngle(rollCamLerp, rollCamStartAng, ang)
+	end
+
+	view.origin = pos
+	view.angles = ang
+	view.angles:Add(ply:GetSmoothViewPunchAngles() + ply:GetCLViewPunchAngles())
+
+	if CamShake then
+		CamShakeAng:Set(Angle(0, 0, math.Rand(-0.9, 0.9) * CamShakeMult))
+		view.angles:Add(CamShakeAng)
+	end
+
+	view.drawviewer = false
+
+	-- The camera owns the view for the whole roll (Beatrun does the same with lockang): the yaw comes
+	-- from the rig, the pitch/roll from the animation, so the mouse cannot fight the roll.
+	local neweye = Angle(ang)
+	neweye.y = BodyAnim:GetAngles().y
+	neweye.z = 0
+	ply:SetEyeAngles(neweye)
+
+	BeatrunZCityTrickEyePos = Vector(view.origin)
+	BeatrunZCityTrickEyeAng = Angle(view.angles)
+	BeatrunZCityCamAnchor = "roll:" .. tostring(att.Name)
+	BeatrunZCityCamAngles = "locked (roll)"
+
+	-- Remembered so the exit can lerp back to Z-City's camera instead of jumping (RemoveBodyAnim).
+	lastattachpos = Vector(view.origin)
+	lastattachang = Angle(view.angles)
+	lastatt = att.Name
+
+	return true
+end
+
 local function ApplyBodyAnimToView(ply, view, isFallback)
 	if not IsValid(ply) or not ply:Alive() or ply:InVehicle() then return end
 	if IsValid(ply.FakeRagdoll) then
@@ -1112,6 +1234,13 @@ local function ApplyBodyAnimToView(ply, view, isFallback)
 			endlerp = 0
 		end
 		return
+	end
+
+	-- Safety roll / knee landing: Beatrun's locked animation camera (see ApplyRollCameraToView)
+	if IsValid(BodyAnim) and ShouldUseRollCam(BodyAnimString) then
+		if ApplyRollCameraToView(ply, view) then
+			return isFallback and view or nil
+		end
 	end
 
 	-- Third person trick camera (Beatrun_TrickCamMode 1): clearly shows the animation instead of

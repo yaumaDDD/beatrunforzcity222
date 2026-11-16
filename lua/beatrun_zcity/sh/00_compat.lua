@@ -43,6 +43,7 @@ if CLIENT then
 	CreateClientConVar("Beatrun_SlideCamTilt", "1", true, false, "Enable Beatrun camera tilt & viewpunch during slide and safety roll", 0, 1)
 	CreateClientConVar("Beatrun_SlideHideBody", "1", true, false, "Temporarily render Beatrun BodyAnim (with Z-City appearance & gloves) during slide/roll", 0, 1)
 	CreateClientConVar("Beatrun_TrickCam", "1", true, false, "Switch the camera onto the trick (slide/safety roll) while it plays, including in third person", 0, 1)
+	CreateClientConVar("Beatrun_RollCam", "1", true, false, "Safety roll / knee landing camera like Beatrun: the view rides the animation's eyes attachment with locked angles (0 = off, 1 = roll + knee landing, 2 = roll only)", 0, 2)
 	CreateClientConVar("Beatrun_TrickCamOffset", "4", true, false, "How far the trick camera is pushed forward out of the character's head (units)", -16, 24)
 CreateClientConVar("Beatrun_CamReport", "0", true, false, "Print camera/body measurements to the console every second during a trick", 0, 1)
 CreateClientConVar("Beatrun_BodyMarkerHold", "15", true, false, "How long (seconds) the markers stay visible after a trick ends", 2, 120)
