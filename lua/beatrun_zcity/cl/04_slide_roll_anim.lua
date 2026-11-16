@@ -227,11 +227,11 @@ function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 		holdingWeapon = IsValid(wep) and wep:GetClass() ~= "weapon_hands_sh"
 	end
 
-	-- Height decides the pose, and only the pose (2.21.18):
-	--   RollMinHeight .. RollBigHeight-1 -> "land" / "landgun"     (knee landing, like Beatrun)
-	--   RollBigHeight .. RollMaxHeight    -> "meroll" / "merollgun" (the actual safety roll)
-	--   above RollMaxHeight               -> no trick at all, Z-City takes the landing
-	-- "merollcrouch" is still supported if the numbers are ever set to produce it.
+	-- Height decides the pose and only the pose (fixed table, 2.21.23):
+	--   290 .. 350 -> "land" / "landgun"      (knee landing, like Beatrun)
+	--   351 .. 750 -> "meroll" / "merollgun"  (the one safety roll)
+	--   above 750  -> no trick at all, Z-City takes the landing
+	-- "merollcrouch" is kept only for the old bool call style.
 	local animName
 	local speed
 	if kneeLanding then
@@ -249,26 +249,25 @@ function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 	-- previous one is always the same landing being triggered twice (prediction + the server trigger,
 	-- a re-armed fall, or the crouch that follows the roll) - a real roll lasts at least that long.
 	local now = CurTime()
-	-- 2.21.21: a pose that came from the server THE pose for this fall - never swallow it. These two
-	-- guards exist because client prediction used to start a second animation for the same landing, and
-	-- since 2.21.14 prediction no longer starts anything: they can only eat the correct pose.
-	if not forced and now - lastTrickAnimAt < 0.9 then
-		local cvDbg = GetConVar("Beatrun_RollDebugLog")
-		if cvDbg and cvDbg:GetBool() then
-			print(string.format("[Beatrun Z-City] roll anim SKIPPED (%.2fs after the previous one, %s)",
-				now - lastTrickAnimAt, tostring(animName)))
-		end
-		lastRollToken = ply:GetSafetyRollTime()
+	local token = ply:GetSafetyRollTime() or 0
+
+	-- 2.21.23: "same trick" is identified by the roll token (the server writes a new
+	-- SafetyRollTime for every landing), not by the pose name. A repeating pose name used to make the
+	-- addon either replay the animation from the top (two animations for one landing) or swallow a
+	-- real one; the token says exactly which landing this pose belongs to.
+	if IsValid(BodyAnim) and BodyAnimString == animName and lastRollToken == token then
 		return
 	end
 
-	-- The same trick can be requested twice: client prediction plus the server trigger, or two variants
-	-- that only differ by a frame. Restarting inside half a second replays the animation from the top,
-	-- and a real roll always lasts longer than that - so a second start is ignored.
-	-- 2.21.19: the same guard, but a pose that the server sent as the answer for this fall always wins -
-	-- otherwise a client-side guess ("meroll") could keep the roll on a fall that is a knee landing.
-	if IsValid(BodyAnim) and (BodyAnimString == animName or ((now - lastRollAnimAt) < 0.5 and not forced)) then
-		lastRollToken = ply:GetSafetyRollTime()
+	-- A second start for a landing we already animated, or a start right after another pose: ignore.
+	-- A pose the server sent is the answer for its own token, so the time guards do not apply to it.
+	if IsValid(BodyAnim) and BodyAnimString == animName and (now - lastRollAnimAt) < 0.5 then
+		return
+	end
+	if not forced and now - lastTrickAnimAt < 0.45 and lastRollToken == token then
+		return
+	end
+	if not forced and now - lastRollAnimAt < 0.15 then
 		return
 	end
 	lastRollAnimAt = now
@@ -282,7 +281,7 @@ function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 
 	slideState = "idle"
 	slideHandled = false
-	lastRollToken = ply:GetSafetyRollTime()
+	lastRollToken = token
 	hook.Remove("Think", "BeatrunZCity_SlideAnimThink")
 
 	local rollAng = ply:GetSafetyRollAng()

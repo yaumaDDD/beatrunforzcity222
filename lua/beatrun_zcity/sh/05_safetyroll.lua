@@ -8,6 +8,8 @@ local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 local cvRollFallReduction = GetConVar("Beatrun_ZCity_RollFallReduction")
 local cvMaxSafeRollSpeed = GetConVar("Beatrun_ZCity_MaxSafeRollSpeed")
 local cvRollMinSpeed = GetConVar("Beatrun_ZCity_RollMinSpeed")
+-- 2.21.23: the landing table is fixed in code (290 / 350 / 750), so these three convars are no longer
+-- read anywhere. They stay registered only so an old config or an old menu cannot error on them.
 local cvRollMinHeight = GetConVar("Beatrun_ZCity_RollMinHeight")
 local cvRollBigHeight = GetConVar("Beatrun_ZCity_RollBigHeight")
 local cvRollMaxHeight = GetConVar("Beatrun_ZCity_RollMaxHeight")
@@ -275,37 +277,32 @@ end, "HOOK_LOW")
 
 -- ---------------------------------------------------------------------------
 -- One place that maps a fall height to a trick, shared by the client and the server so the animation
--- can never disagree with the movement. 2.21.18 numbers (the user's own):
---   0 = no trick, plain Z-City landing     below RollMinHeight (290)
---   1 = knee landing   "land" / "landgun"  RollMinHeight (290) .. RollBigHeight (350), inclusive
---   2 = the one roll   "meroll" / ...      above RollBigHeight (351) .. RollMaxHeight (750)
---   0 = no trick, Z-City fall injuries     above RollMaxHeight (750) - nothing saves that fall
--- Only the height decides. There is exactly one roll pose (Beatrun_RollAnim / Beatrun_RollAlways are
--- no longer used: the same fall must always give the same animation).
--- ---------------------------------------------------------------------------
+-- can never disagree with the movement. The table is FIXED (2.21.23):
+--   0 = no trick, plain Z-City landing     below 290
+--   1 = knee landing   "land" / "landgun"  290 .. 350, inclusive
+--   2 = the one roll   "meroll" / ...      351 .. 750
+--   0 = no trick, Z-City fall injuries     above 750 - nothing saves that fall
+--
+-- It is deliberately NOT read from convars any more. A saved config, an older copy of the addon or an
+-- old menu could leave RollMinHeight / RollBigHeight sitting at values from another version (your log
+-- showed 70 / 260), and then the same fall played a different animation depending on the machine - the
+-- exact complaint this addon had to stop. Height alone decides now, on every install, always.
+local KNEE_HEIGHT, ROLL_HEIGHT, MAX_HEIGHT = 290, 350, 750
+
 function BeatrunRollVariantForHeight(fallHeight)
 	fallHeight = math.max(0, fallHeight or 0)
 
-	local kneeHeight = math.max(0, cvRollMinHeight and cvRollMinHeight:GetFloat() or 290)
-	local rollHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 350
-	local maxHeight = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
-
-	-- A server admin can type anything into the convars: keep the three numbers ordered, so a mistyped
-	-- RollBigHeight can never make a 300 unit fall play the roll, and RollMaxHeight always stays on top.
-	if rollHeight <= kneeHeight then rollHeight = kneeHeight + 1 end
-	if maxHeight <= rollHeight then maxHeight = rollHeight + 1 end
-
 	-- too far to be saved by a trick: Z-City owns that landing completely
-	if fallHeight > maxHeight then return 0, false, false, rollHeight end
+	if fallHeight > MAX_HEIGHT then return 0, false, false, ROLL_HEIGHT end
 
 	local variant = 0
-	if fallHeight > rollHeight then
+	if fallHeight > ROLL_HEIGHT then
 		variant = 2
-	elseif fallHeight >= kneeHeight then
+	elseif fallHeight >= KNEE_HEIGHT then
 		variant = 1
 	end
 
-	return variant, variant == 2, false, rollHeight
+	return variant, variant == 2, false, ROLL_HEIGHT
 end
 
 -- Fall height measured the same way everywhere (peak of the fall / last measured landing)
@@ -318,13 +315,12 @@ end
 -- 2.21.18: a fall above RollMaxHeight is beyond what a trick can save. Nothing of ours may touch that
 -- landing - Z-City hands out its own injuries (broken legs, ragdoll), exactly like it does without us.
 local function TrickCanSave(height)
-	local maxHeight = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
-	return height <= maxHeight
+	return (height or 0) <= MAX_HEIGHT
 end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.22"
+local ADDON_VERSION = "2.21.23"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
@@ -346,8 +342,7 @@ local function TrickOwnsLanding(ply)
 	-- before ours: this landing is the one the trick is for, so its ragdoll must not fire either.
 	if ply._BRZFallArmed then
 		local h = MeasuredFallHeight(ply)
-		local minH = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
-		if h >= minH and TrickCanSave(h) then return true end
+		if h >= KNEE_HEIGHT and TrickCanSave(h) then return true end
 	end
 	return false
 end
@@ -370,12 +365,18 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	local CT = CurTime()
 	local maxSafeSpeed = cvMaxSafeRollSpeed:GetFloat()
 
+	-- 2.21.23: the trick owns the player for its whole duration. Without this a second ground touch
+	-- during the roll (the body bounces once, or the roll steps over a small edge) started the same
+	-- animation again from the top - that was the "two animations" you saw in the log.
+	if CT < (ply:GetSafetyRollTime() or 0) then Decline(ply, "the trick is still playing") return end
+
 	if CT > ply:GetSafetyRollKeyTime() then Decline(ply, "Ctrl was not tapped in the air (or the tap was too early)") return end
 
 	-- The arm belongs to exactly one landing, and a roll that just started must not be re-triggered
 	-- by the next physics frame (that was the other half of the "animation plays twice" bug).
 	ply._BRZFallArmed = nil
 	if CT < (ply._BRZRollStartGuard or 0) then Decline(ply, "the previous trick had just started") return end
+
 	ply._BRZRollStartGuard = CT + 0.45
 
 	-- The hard cap used to be 820: any fall faster than that skipped the roll entirely, so the ragdoll
@@ -396,9 +397,9 @@ local function TrySafetyRoll(ply, water, floater, speed)
 		return
 	end
 
-	local minHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
+	local minHeight = KNEE_HEIGHT
 	if fallHeight < minHeight then
-		Decline(ply, string.format("a %.0f unit fall is below RollMinHeight (%.0f)", fallHeight, minHeight))
+		Decline(ply, string.format("a %.0f unit fall is below %d", fallHeight, KNEE_HEIGHT))
 		if cvRollDebugLog and cvRollDebugLog:GetBool() then
 			print(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - too low for a roll", fallHeight, speed))
 		end
@@ -406,7 +407,7 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	end
 
 	-- Big fall = the heavy variant: longer roll, crouched pose, wider protection window, more stamina.
-	local bigHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 260
+	local bigHeight = ROLL_HEIGHT
 	local bigFall = fallHeight >= bigHeight
 
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
@@ -427,6 +428,12 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	ply:SetSafetyRollKeyTime(0)
 	ply._BRZRollProtectUntil = CT + protectTime
 	ply._BRZRollHeight = fallHeight
+
+	-- 2.21.23: this fall has just been paid for. Forgetting the height here is what makes a second
+	-- ground touch of the same landing harmless: the old code kept re-measuring the same 300-400 units
+	-- and started the trick again (the "two animations" in the log).
+	ply._BRZLastFallHeight = nil
+	ply._BRZFallPeakZ = ply:GetPos().z
 
 	local mobility = BeatrunGetMobilityFactor(ply)
 	ply:SetRollLoss(mobility < 0.75)
@@ -454,10 +461,9 @@ local function TrySafetyRoll(ply, water, floater, speed)
 
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
 		local names = { [0] = "nothing", [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
-		local maxH = cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750
-		local kneeH = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
-		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %.0f, knees %.0f..%.0f, roll %.0f..%.0f, nothing > %.0f]",
-			fallHeight, variant, names[variant] or "?", kneeH, kneeH, bigH, bigH + 1, maxH, maxH))
+		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %d, knees %d..%d, roll %d..%d, nothing > %d]",
+			fallHeight, variant, names[variant] or "?", KNEE_HEIGHT, KNEE_HEIGHT, ROLL_HEIGHT,
+			ROLL_HEIGHT + 1, MAX_HEIGHT, MAX_HEIGHT))
 	end
 
 	-- How long the trick owns the player: a drop from a roof rolls noticeably longer than a fence hop.
@@ -600,8 +606,7 @@ local function FallStunWrapper(ply, inwater, onfloater, speed)
 
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() and not TrickOwnsLanding(ply) and not protectedWindow then
 		local h = MeasuredFallHeight(ply)
-		local minH = cvRollMinHeight and cvRollMinHeight:GetFloat() or 290
-		if h >= minH - 20 and h >= 100 then
+		if h >= KNEE_HEIGHT - 20 and h >= 100 then
 			ReportLanding(ply, string.format("fall %.0f, impact %.0f - NO trick: %s; Z-City lands you",
 				h, speed, ply._BRZRollDecline or "the trick did not take this landing"))
 		end
@@ -755,7 +760,7 @@ if SERVER then
 		-- Height gate has to be mirrored here: a drop that is too small for a roll keeps Z-City's own
 		-- fall damage instead of being silently negated by a held Ctrl.
 		local fallHeight = MeasuredFallHeight(ply)
-		if fallHeight < (cvRollMinHeight and cvRollMinHeight:GetFloat() or 290) then return end
+		if fallHeight < KNEE_HEIGHT then return end
 		if not TrickCanSave(fallHeight) then return end -- too big to be saved: Z-City damage stays
 
 		local hardCap = math.max(maxSafeSpeed, 3000)
@@ -784,12 +789,7 @@ end
 -- 2.21.21: one line at start-up with the numbers this copy actually runs with. If a saved config or an
 -- old server.cfg pins a stale value, it shows up here instead of silently turning every fall into a roll.
 timer.Simple(1, function()
-	print(string.format("[Beatrun Z-City %s] landing numbers: knees %.0f..%.0f, roll %.0f..%.0f, above %.0f no trick, min impact %.0f",
-		ADDON_VERSION,
-		cvRollMinHeight and cvRollMinHeight:GetFloat() or 290,
-		cvRollBigHeight and cvRollBigHeight:GetFloat() or 350,
-		cvRollBigHeight and cvRollBigHeight:GetFloat() or 350,
-		cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750,
-		cvRollMaxHeight and cvRollMaxHeight:GetFloat() or 750,
+	print(string.format("[Beatrun Z-City %s] landing table (fixed): knees %d..%d, roll %d..%d, above %d no trick, min impact %.0f",
+		ADDON_VERSION, KNEE_HEIGHT, ROLL_HEIGHT, ROLL_HEIGHT, MAX_HEIGHT, MAX_HEIGHT,
 		cvRollMinSpeed and cvRollMinSpeed:GetFloat() or 250))
 end)
