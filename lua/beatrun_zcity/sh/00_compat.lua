@@ -19,6 +19,17 @@ CreateConVar("Beatrun_ZCity_RollHolster", "1", REP, "Holster any equipped weapon
 CreateClientConVar("Beatrun_ZCity_SlideWeapon", "1", true, false, "Armed slide: 0 = clean first person (animated body hidden), 1 = animated body legs plus your own viewmodel with the weapon", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideNoDamage", "1", REP, "A slide protects from Z-City impact damage and injuries", 0, 1)
 CreateConVar("Beatrun_ZCity_RollMinSpeed", "250", REP, "Minimum fall speed at which a timed roll activates", 0, 2000)
+CreateConVar("Beatrun_ZCity_RollMinHeight", "70", REP, "Minimum fall height (units) a timed roll is allowed to play on: a hop or a step down never turns into a roll", 0, 400)
+CreateConVar("Beatrun_ZCity_RollBigHeight", "260", REP, "Fall height (units) from which the hard landing / crouched roll variant plays and the protection window grows", 80, 1200)
+
+-- Ledge climb & hang (Beatrun climb.lua, ported to this addon's scheme)
+CreateConVar("Beatrun_ZCity_ClimbEnabled", "1", REP, "Enable Beatrun ledge climb / hang in Z-City", 0, 1)
+CreateConVar("Beatrun_ZCity_ClimbHangHeight", "74", REP, "Ledge climb: how far (units) the body hangs below the ledge edge while gripping", 40, 120)
+CreateConVar("Beatrun_ZCity_ClimbMaxLedgeHeight", "68", REP, "Ledge climb: maximum ledge height above your feet that can be grabbed", 24, 110)
+CreateConVar("Beatrun_ZCity_ClimbReach", "52", REP, "Ledge climb: how far ahead of you a wall is detected (units)", 24, 96)
+CreateConVar("Beatrun_ZCity_ClimbHoldDelay", "0.35", REP, "Ledge climb: how long you hang before holding W pulls you up", 0, 2)
+CreateConVar("Beatrun_ZCity_ClimbHeaveTime", "0.55", REP, "Ledge climb: duration of the pull-up (seconds)", 0.2, 1.5)
+CreateConVar("Beatrun_ZCity_ClimbCooldown", "0.45", REP, "Ledge climb: delay after a climb before the next grab can start", 0, 3)
 CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether the roll accepted them", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideSteer", "0", REP, "Allow changing the slide course with strafe keys (0 = course is fixed)", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideShoot", "1", REP, "Allow free aiming and shooting during a slide", 0, 1)
@@ -63,6 +74,11 @@ if SERVER then
 	util.AddNetworkString("Beatrun_ZC_SlideEnd")
 	util.AddNetworkString("Beatrun_ZC_RollStart")
 	util.AddNetworkString("Beatrun_ZC_SlideAim")
+
+	-- Ledge climb / hang animation triggers (server -> owning client)
+	util.AddNetworkString("Beatrun_ZC_ClimbGrab")
+	util.AddNetworkString("Beatrun_ZC_ClimbHeave")
+	util.AddNetworkString("Beatrun_ZC_ClimbEnd")
 end
 
 function BeatrunIsZCity()

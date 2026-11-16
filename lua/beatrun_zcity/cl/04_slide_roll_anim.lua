@@ -193,7 +193,7 @@ function BeatrunSlideAnimAbort()
 	RemoveBodyAnim(false)
 end
 
-function BeatrunRollAnimStart(isLandInPlace)
+function BeatrunRollAnimStart(isLandInPlace, bigFall)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
 
@@ -220,14 +220,18 @@ function BeatrunRollAnimStart(isLandInPlace)
 	-- Beatrun_RollAnim 0 = plain landing animation, 1 = the actual roll
 	local useRoll = not (cvRollAnim and cvRollAnim:GetInt() == 0)
 
+	-- Height decides the pose (2.21.7): a hard fall from a roof lands crouched / rolls crouched, a short
+	-- drop keeps the normal landing. The rig has land*, land*crouch, meroll* and meroll*crouch.
 	local animName
 	local speed
 	if isLandInPlace or not useRoll then
-		animName = holdingWeapon and "landgun" or "land"
-		speed = 1.05
+		animName = bigFall and (holdingWeapon and "landguncrouch" or "landcrouch")
+			or (holdingWeapon and "landgun" or "land")
+		speed = bigFall and 0.95 or 1.05
 	else
-		animName = holdingWeapon and "merollgun" or "meroll"
-		speed = 1.15
+		animName = bigFall and (holdingWeapon and "merollguncrouch" or "merollcrouch")
+			or (holdingWeapon and "merollgun" or "meroll")
+		speed = bigFall and 0.95 or 1.15
 	end
 
 	-- The same animation may be requested twice (client prediction + the network trigger) - don't restart it
@@ -292,7 +296,7 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 
 	if rolling and not sliding and rollEndTime > lastRollToken and not IsValid(BodyAnim) then
 		local ang = ply:GetSafetyRollAng()
-		BeatrunRollAnimStart(ang == angle_zero)
+		BeatrunRollAnimStart(ang == angle_zero, (ply._BRZRollVariant or 1) >= 2)
 	end
 end)
 
@@ -311,7 +315,8 @@ end)
 
 net.Receive("Beatrun_ZC_RollStart", function()
 	local isLandInPlace = net.ReadBool()
-	BeatrunRollAnimStart(isLandInPlace)
+	local bigFall = net.ReadBool()
+	BeatrunRollAnimStart(isLandInPlace, bigFall)
 end)
 
 if game.SinglePlayer() then
@@ -328,6 +333,7 @@ if game.SinglePlayer() then
 
 	net.Receive("RollAnimSP", function()
 		local isLandInPlace = net.ReadBool()
-		BeatrunRollAnimStart(isLandInPlace)
+		local bigFall = net.ReadBool()
+		BeatrunRollAnimStart(isLandInPlace, bigFall)
 	end)
 end

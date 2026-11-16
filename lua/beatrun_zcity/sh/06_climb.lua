@@ -1,0 +1,492 @@
+-- Beatrun ledge climb & hang for Z-City (2.21.7).
+-- Ported from Beatrun's sh/climb.lua to this addon's scheme: no gamemode edits, no MOVETYPE_NOCLIP,
+-- no view/angle lock. The origin is driven inside SetupMove (predicted on the client and repeated on
+-- the server) and the animation goes through StartBodyAnim like the slide and the safety roll.
+--
+-- Flow:
+--   * jump at a wall, or fly into one while falling  -> grab
+--   * low ledge (waist/chest height)                 -> immediate pull-up onto it (vaultonto)
+--   * high ledge                                     -> hang, then hold W to pull up (hangheaveup)
+--   * while hanging: Ctrl drops you, Jump pushes you off the wall (the safety roll gets armed)
+
+local cvEnabled = GetConVar("Beatrun_ZCity_ClimbEnabled")
+local cvHangHeight = GetConVar("Beatrun_ZCity_ClimbHangHeight")
+local cvMaxLedge = GetConVar("Beatrun_ZCity_ClimbMaxLedgeHeight")
+local cvReach = GetConVar("Beatrun_ZCity_ClimbReach")
+local cvHoldDelay = GetConVar("Beatrun_ZCity_ClimbHoldDelay")
+local cvHeaveTime = GetConVar("Beatrun_ZCity_ClimbHeaveTime")
+local cvCooldown = GetConVar("Beatrun_ZCity_ClimbCooldown")
+local cvDebugLog = GetConVar("Beatrun_RollDebugLog")
+
+local STATE_NONE, STATE_HANG, STATE_HEAVE = 0, 1, 2
+local LOW_HEAVE_TIME = 0.45
+
+local function Log(fmt, ...)
+	if cvDebugLog and cvDebugLog:GetBool() then
+		print("[Beatrun Z-City] " .. string.format(fmt, ...))
+	end
+end
+
+local PLAYER = FindMetaTable("Player")
+
+function PLAYER:GetBRZClimbState()
+	return self._BRZClimbState or STATE_NONE
+end
+
+function PLAYER:SetBRZClimbState(state)
+	self._BRZClimbState = state or STATE_NONE
+	self._BRZClimbStateTime = CurTime()
+	return self._BRZClimbState
+end
+
+local function ClearClimbState(ply)
+	ply._BRZClimbState = STATE_NONE
+	ply._BRZClimbStateTime = 0
+	ply._BRZClimbAng = nil
+	ply._BRZClimbHangPos = nil
+	ply._BRZClimbStandPos = nil
+	ply._BRZClimbHeaveStart = nil
+	ply._BRZClimbHeaveDur = nil
+	ply._BRZClimbGrabSpeed = nil
+	ply._BRZClimbLow = nil
+	ply._BRZClimbJumpWindow = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Ledge search: a wall in front of the eyes plus a player-sized hull that has to find a real standing
+-- spot on top of it (the same idea as Beatrun's ClimbingTrace / ClimbingTraceEnd pair).
+-- ---------------------------------------------------------------------------
+local wallTable = {}
+local ledgeHull = {}
+local standTable = {}
+local floorTable = {}
+local hangTable = {}
+
+local function FindLedge(ply, mv, eyeang)
+	local mins, maxs = ply:GetHull()
+	local origin = mv:GetOrigin()
+	local reach = cvReach:GetFloat()
+
+	local fwd = eyeang:Forward()
+	fwd = Vector(fwd.x, fwd.y, math.Clamp(fwd.z, -0.6, 0.5))
+	if fwd:LengthSqr() < 0.001 then return end
+	fwd:Normalize()
+
+	-- 1) the wall itself
+	wallTable.start = origin + Vector(0, 0, maxs.z * 0.55)
+	wallTable.endpos = wallTable.start + fwd * reach
+	wallTable.filter = ply
+	wallTable.mask = MASK_PLAYERSOLID
+
+	local wall = util.TraceLine(wallTable)
+	if not wall.Hit or wall.Fraction <= 0 then return end
+
+	local normal = wall.HitNormal
+	if math.abs(normal.z) > 0.4 then return end
+	if IsValid(wall.Entity) and wall.Entity.NoClimbing then return end
+
+	local wallang = normal:Angle()
+	wallang.y = wallang.y + 180 -- forward points INTO the wall, exactly like Beatrun
+	wallang.x, wallang.z = 0, 0
+	if math.abs(math.AngleDifference(wallang.y, eyeang.y)) > 60 then return end
+
+	-- 2) push the standing hull into the wall and look for a ledge top it can rest on
+	local flat = wall.HitPos - origin
+	flat.z = 0
+	local dist = flat:Length()
+	local lead = math.Clamp(dist + math.max(maxs.x, maxs.y) + 4, 26, 62)
+
+	local up = math.max(maxs.z * 0.9, 48)
+	local probeStart = Vector(origin.x, origin.y, origin.z + up) + wallang:Forward() * lead
+
+	ledgeHull.mins = Vector(mins.x, mins.y, 0)
+	ledgeHull.maxs = maxs
+	ledgeHull.filter = ply
+	ledgeHull.mask = MASK_PLAYERSOLID
+	ledgeHull.start = probeStart
+	ledgeHull.endpos = probeStart - Vector(0, 0, up + 100)
+
+	local ledge = util.TraceHull(ledgeHull)
+	if not ledge.Hit then return end
+	if ledge.Fraction <= 0.02 then return end -- started inside solid: nothing standable up there
+	if ledge.HitNormal.z < 0.6 then return end -- must be a floor-like top surface
+
+	local topZ = ledge.HitPos.z
+	local height = topZ - origin.z
+	if height < 12 then return end -- already level with it
+	if height > cvMaxLedge:GetFloat() then return end
+
+	local standPos = Vector(ledge.HitPos.x, ledge.HitPos.y, topZ + 1)
+
+	-- 3) that spot has to be free for the player's own hull, with a floor under it
+	standTable.start = standPos
+	standTable.endpos = standPos
+	standTable.mins = Vector(mins.x, mins.y, 1)
+	standTable.maxs = maxs
+	standTable.filter = ply
+	standTable.mask = MASK_PLAYERSOLID
+	if util.TraceHull(standTable).Hit then return end
+
+	floorTable.start = standPos
+	floorTable.endpos = standPos - Vector(0, 0, 12)
+	floorTable.filter = ply
+	floorTable.mask = MASK_PLAYERSOLID
+	if not util.TraceLine(floorTable).Hit then return end
+
+	-- 4) the hanging body: hands on the ledge edge, feet in the air
+	local radius = math.max(maxs.x, maxs.y) + 1.5
+	local hangPos = Vector(wall.HitPos.x, wall.HitPos.y, 0) + normal * radius
+	hangPos.z = topZ - cvHangHeight:GetFloat()
+
+	hangTable.start = hangPos
+	hangTable.endpos = hangPos
+	hangTable.mins = mins
+	hangTable.maxs = maxs
+	hangTable.filter = ply
+	hangTable.mask = MASK_PLAYERSOLID
+	-- No free air below the ledge (the floor is right there) -> no hang, just vault up onto it
+	if util.TraceHull(hangTable).Hit then hangPos = nil end
+
+	return {
+		wallang = wallang,
+		hangPos = hangPos,
+		standPos = standPos,
+		topZ = topZ,
+		height = height,
+		dist = dist
+	}
+end
+
+-- ---------------------------------------------------------------------------
+-- State changes
+-- ---------------------------------------------------------------------------
+local StartHeave
+
+local function StartGrab(ply, mv, ledge, CT)
+	local grabSpeed = math.max(0, -mv:GetVelocity().z)
+	local hard = grabSpeed > 420
+	local origin = mv:GetOrigin()
+
+	ply._BRZClimbAng = ledge.wallang
+	ply._BRZClimbStandPos = ledge.standPos
+	ply._BRZClimbGrabSpeed = grabSpeed
+
+	-- you cannot hang from a ledge with a rifle in your hands
+	if isfunction(BeatrunZCityHolsterForTrick) then
+		BeatrunZCityHolsterForTrick(ply)
+	end
+
+	Log("ledge grab: height %.0f, wall %.0f away, impact %.0f", ledge.height, ledge.dist, grabSpeed)
+
+	-- No room to hang below this ledge (a floor right under it, or you are standing on the ground):
+	-- pull straight up onto it instead of hanging in the air
+	if not isvector(ledge.hangPos) then
+		ply._BRZClimbLow = true
+		ply._BRZClimbHangPos = Vector(origin)
+
+		if SERVER then
+			ply:EmitSound("Cloth.MovementRun")
+			ply:EmitSound("WallrunRelease.Concrete")
+		end
+
+		StartHeave(ply, mv, CT, true)
+		return
+	end
+
+	ply._BRZClimbLow = false
+	ply._BRZClimbHangPos = ledge.hangPos
+	ply:SetBRZClimbState(STATE_HANG)
+
+	mv:SetVelocity(vector_origin)
+	mv:SetForwardSpeed(0)
+	mv:SetSideSpeed(0)
+	mv:SetUpSpeed(0)
+	mv:SetOrigin(ledge.hangPos)
+	mv:SetButtons(bit.band(mv:GetButtons(), bit.bnot(IN_JUMP)))
+
+	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimGrab) then
+		BeatrunZCityClimbAnimGrab(ledge.wallang, hard)
+	end
+
+	if SERVER then
+		ply:EmitSound("Cloth.MovementRun")
+		ply:EmitSound("WallrunRelease.Concrete")
+		if hard then ply:EmitSound("Cloth.FallShortMedium") end
+
+		if not game.SinglePlayer() then
+			net.Start("Beatrun_ZC_ClimbGrab")
+				net.WriteAngle(ledge.wallang)
+				net.WriteBool(hard)
+			net.Send(ply)
+		end
+	end
+end
+
+StartHeave = function(ply, mv, CT, low)
+	local dur = low and LOW_HEAVE_TIME or math.max(0.2, cvHeaveTime:GetFloat())
+
+	ply:SetBRZClimbState(STATE_HEAVE)
+	ply._BRZClimbHeaveStart = CT
+	ply._BRZClimbHeaveDur = dur
+	ply._BRZClimbLow = low and true or false
+
+	mv:SetVelocity(vector_origin)
+	mv:SetForwardSpeed(0)
+	mv:SetSideSpeed(0)
+	mv:SetUpSpeed(0)
+
+	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimHeave) then
+		BeatrunZCityClimbAnimHeave(ply._BRZClimbAng, low)
+	end
+
+	if SERVER then
+		ply:EmitSound("Cloth.MovementWalk")
+		if not game.SinglePlayer() then
+			net.Start("Beatrun_ZC_ClimbHeave")
+				net.WriteAngle(ply._BRZClimbAng or angle_zero)
+				net.WriteBool(low and true or false)
+			net.Send(ply)
+		end
+	end
+end
+
+local function FinishHeave(ply, mv, CT)
+	local standPos = ply._BRZClimbStandPos
+	local ang = ply._BRZClimbAng
+
+	ClearClimbState(ply)
+	ply._BRZClimbCooldown = CT + cvCooldown:GetFloat()
+
+	if isvector(standPos) then mv:SetOrigin(standPos) end
+
+	local push = ang and ang:Forward() or Vector(1, 0, 0)
+	push = Vector(push.x, push.y, 0)
+	if push:LengthSqr() > 0.001 then
+		push:Normalize()
+		push:Mul(40)
+	else
+		push = vector_origin
+	end
+	mv:SetVelocity(push)
+
+	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimEnd) then
+		BeatrunZCityClimbAnimEnd(true)
+	end
+
+	if SERVER then
+		ply:EmitSound("Cloth.MovementWalk")
+		if not game.SinglePlayer() then
+			net.Start("Beatrun_ZC_ClimbEnd")
+				net.WriteBool(true)
+			net.Send(ply)
+		end
+	end
+end
+
+local function ReleaseGrab(ply, mv, CT, jumpOff)
+	local ang = ply._BRZClimbAng
+	local hangPos = ply._BRZClimbHangPos
+
+	ClearClimbState(ply)
+	ply._BRZClimbCooldown = CT + cvCooldown:GetFloat()
+
+	if isvector(hangPos) then mv:SetOrigin(hangPos) end
+
+	local vel = vector_origin
+	if jumpOff and ang then
+		local away = ang:Forward() * -1
+		vel = Vector(away.x, away.y, 0)
+		if vel:LengthSqr() > 0.001 then
+			vel:Normalize()
+			vel:Mul(110)
+		else
+			vel = vector_origin
+		end
+		vel.z = 210
+	end
+	mv:SetVelocity(vel)
+
+	-- Dropping off a ledge is a fall: arm the safety roll for it (Ctrl can stay held).
+	ply:SetSafetyRollKeyTime(CT + 0.6)
+	ply._BRZFallPeakZ = nil
+
+	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimEnd) then
+		BeatrunZCityClimbAnimEnd(false)
+	end
+
+	if SERVER then
+		ply:EmitSound("Cloth.MovementRun")
+		if not game.SinglePlayer() then
+			net.Start("Beatrun_ZC_ClimbEnd")
+				net.WriteBool(false)
+			net.Send(ply)
+		end
+	end
+end
+
+local function CancelClimb(ply)
+	ClearClimbState(ply)
+	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimEnd) then
+		BeatrunZCityClimbAnimEnd(false)
+	end
+	if SERVER and not game.SinglePlayer() then
+		net.Start("Beatrun_ZC_ClimbEnd")
+			net.WriteBool(false)
+		net.Send(ply)
+	end
+end
+
+-- ---------------------------------------------------------------------------
+-- Per-tick updates
+-- ---------------------------------------------------------------------------
+local function UpdateHang(ply, mv, CT)
+	local held = CT - (ply._BRZClimbStateTime or CT)
+	local hangPos = ply._BRZClimbHangPos
+
+	mv:SetVelocity(vector_origin)
+	mv:SetForwardSpeed(0)
+	mv:SetSideSpeed(0)
+	mv:SetUpSpeed(0)
+	if isvector(hangPos) then mv:SetOrigin(hangPos) end
+	mv:SetButtons(bit.band(mv:GetButtons(), bit.bnot(IN_JUMP)))
+
+	if held > 0.12 then
+		if mv:KeyPressed(IN_DUCK) then
+			ReleaseGrab(ply, mv, CT, false)
+			return
+		end
+
+		if held > cvHoldDelay:GetFloat() + 0.05 then
+			if mv:KeyPressed(IN_JUMP) then
+				ReleaseGrab(ply, mv, CT, true)
+				return
+			end
+			if mv:KeyDown(IN_FORWARD) then
+				StartHeave(ply, mv, CT, false)
+				return
+			end
+		end
+	end
+
+	-- safety: never hang forever (bleeding out, alt-tab, stuck input)
+	if held > 15 then
+		ReleaseGrab(ply, mv, CT, false)
+	end
+end
+
+local function UpdateHeave(ply, mv, CT)
+	local dur = ply._BRZClimbHeaveDur or math.max(0.2, cvHeaveTime:GetFloat())
+	local startT = ply._BRZClimbHeaveStart or CT
+	local from = ply._BRZClimbHangPos
+	local to = ply._BRZClimbStandPos
+
+	if not (isvector(from) and isvector(to)) then
+		CancelClimb(ply)
+		return
+	end
+
+	local t = math.Clamp((CT - startT) / math.max(dur, 0.05), 0, 1)
+	local lift = 8 -- rise just above the edge, then step over it and settle down
+	local pos
+
+	if t < 0.6 then
+		local u = t / 0.6
+		local s = u * u * (3 - 2 * u)
+		pos = Vector(from.x, from.y, Lerp(s, from.z, to.z + lift))
+	else
+		local u = math.Clamp((t - 0.6) / 0.4, 0, 1)
+		local s = u * u * (3 - 2 * u)
+		pos = Vector(
+			Lerp(s, from.x, to.x),
+			Lerp(s, from.y, to.y),
+			Lerp(s, to.z + lift, to.z)
+		)
+	end
+
+	mv:SetVelocity(vector_origin)
+	mv:SetForwardSpeed(0)
+	mv:SetSideSpeed(0)
+	mv:SetUpSpeed(0)
+	mv:SetOrigin(pos)
+	mv:SetButtons(bit.band(mv:GetButtons(), bit.bnot(IN_JUMP)))
+
+	if t >= 1 then
+		FinishHeave(ply, mv, CT)
+	end
+end
+
+-- ---------------------------------------------------------------------------
+-- SetupMove entry point
+-- ---------------------------------------------------------------------------
+BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Climb", function(ply, mv, cmd)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+
+	local CT = CurTime()
+	local state = ply:GetBRZClimbState()
+
+	if not cvEnabled:GetBool() or not BeatrunCanSlideOrRoll(ply) then
+		if state ~= STATE_NONE then CancelClimb(ply) end
+		return
+	end
+
+	if state == STATE_HANG then
+		UpdateHang(ply, mv, CT)
+		return
+	elseif state == STATE_HEAVE then
+		UpdateHeave(ply, mv, CT)
+		return
+	end
+
+	-- Conditions to start a grab
+	if (ply._BRZClimbCooldown or 0) > CT then return end
+	if CT < ply:GetSafetyRollTime() then return end
+	if ply:GetSliding() then return end
+
+	local onground = ply:OnGround()
+	local vel = mv:GetVelocity()
+
+	local jumpWindow = (ply._BRZClimbJumpWindow or 0) > CT
+
+	if onground then
+		-- Only an intentional jump at the wall: running along a wall must never lift you up.
+		-- The grab itself happens a few ticks later, in the air, like Beatrun's ledge catch.
+		if mv:KeyPressed(IN_JUMP) then
+			ply._BRZClimbJumpWindow = CT + 0.45
+		end
+		return
+	end
+
+	if vel.z > 150 and not jumpWindow then
+		return -- still rising fast, the hands are not there yet
+	end
+
+	local eyeang = ply:EyeAngles()
+	local ledge = FindLedge(ply, mv, eyeang)
+	if not ledge then return end
+
+	if not jumpWindow then
+		-- Free falling past a wall only grabs if you push forward or actually fly into it
+		local flatVel = Vector(vel.x, vel.y, 0)
+		local towards = flatVel:Dot(ledge.wallang:Forward())
+		if not mv:KeyDown(IN_FORWARD) and towards < 90 then return end
+	else
+		ply._BRZClimbJumpWindow = nil
+	end
+
+	StartGrab(ply, mv, ledge, CT)
+end)
+
+-- Reset on death/spawn so a ragdoll or respawn never leaves a player stuck mid-climb
+local function ResetOnEntity(ply)
+	if not IsValid(ply) or not ply:IsPlayer() then return end
+	ClearClimbState(ply)
+	ply._BRZClimbCooldown = 0
+end
+
+hook.Add("PlayerDeath", "BeatrunZCity_ClimbReset", ResetOnEntity)
+hook.Add("PlayerSpawn", "BeatrunZCity_ClimbReset", ResetOnEntity)
+
+-- Public helpers (debug panel / other addons)
+function BeatrunZCityIsClimbing(ply)
+	return IsValid(ply) and ply:GetBRZClimbState() ~= STATE_NONE
+end

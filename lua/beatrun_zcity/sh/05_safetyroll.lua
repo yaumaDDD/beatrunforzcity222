@@ -10,6 +10,8 @@ local cvRollHolster = GetConVar("Beatrun_ZCity_RollHolster")
 local cvRollFallReduction = GetConVar("Beatrun_ZCity_RollFallReduction")
 local cvMaxSafeRollSpeed = GetConVar("Beatrun_ZCity_MaxSafeRollSpeed")
 local cvRollMinSpeed = GetConVar("Beatrun_ZCity_RollMinSpeed")
+local cvRollMinHeight = GetConVar("Beatrun_ZCity_RollMinHeight")
+local cvRollBigHeight = GetConVar("Beatrun_ZCity_RollBigHeight")
 local cvRollDebugLog = GetConVar("Beatrun_RollDebugLog")
 
 local landang = Angle(0, 0, 0)
@@ -31,7 +33,7 @@ end
 
 -- Holsters any equipped weapon to bare hands (weapon_hands_sh in Z-City) during a safety roll,
 -- matching Z-City's own TauntHolsterWeapons pattern in movement/sh_inertia.lua.
-local function HolsterWeaponForRoll(ply, cmd)
+local function HolsterWeaponForTrick(ply, cmd)
 	if cvRollHolster and not cvRollHolster:GetBool() then return end
 	if not IsValid(ply) or not ply:IsPlayer() or not ply:Alive() then return end
 
@@ -56,6 +58,9 @@ local function HolsterWeaponForRoll(ply, cmd)
 		ply:SetActiveWeapon(NULL)
 	end
 end
+
+-- Ledge climb (sh/06_climb.lua) stows weapons with exactly the same rule
+BeatrunZCityHolsterForTrick = HolsterWeaponForTrick
 
 BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, mv, cmd)
 	if not IsValid(ply) or not ply:IsPlayer() then return end
@@ -89,12 +94,67 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 	local velZ = mv:GetVelocity().z
 	local rollPressed = duckPressed or sprintPressed
 
-	-- Arm safety roll without stripping IN_DUCK (avoids Z-City AntiCrouchSpam penalty)
-	if velZ <= -300 and not onground and not wasOnGround and not ply:GetSliding() and rollPressed then
+	-- Fall height tracking (added in 2.21.7). The roll is no longer decided by the impact speed alone:
+	-- the height actually dropped is measured from the highest point of the fall, so a big fall plays the
+	-- hard landing / crouched roll and a small hop never turns into a trick.
+	local org = mv:GetOrigin()
+	if onground then
+		if not wasOnGround then
+			local peak = ply._BRZFallPeakZ
+			if peak and peak - org.z > 0 then
+				ply._BRZLastFallHeight = math.max(0, peak - org.z)
+				if cvRollDebugLog and cvRollDebugLog:GetBool() then
+					print(string.format("[Beatrun Z-City] fall height %.0f units", ply._BRZLastFallHeight))
+				end
+			else
+				ply._BRZLastFallHeight = 0
+			end
+			ply._BRZWasClimbHeave = nil
+
+			-- Ctrl was held during the fall -> the block Z-City was already braced for keeps running
+			-- through the impact frames, not only until the feet touch.
+			if ply._BRZBraced and (ply._BRZBracedUntil or 0) >= CT - 0.6 then
+				ply._BRZBracedUntil = math.max(ply._BRZBracedUntil or 0, CT + 0.6)
+			else
+				ply._BRZBraced = false
+			end
+		end
+		ply._BRZFallPeakZ = org.z
+		if CT > (ply._BRZBracedUntil or 0) then ply._BRZBraced = false end
+	else
+		-- a new fall starts: the height of the previous landing must not leak into it
+		if wasOnGround then
+			ply._BRZLastFallHeight = nil
+		end
+
+		local peak = ply._BRZFallPeakZ
+		if not peak or org.z > peak then
+			ply._BRZFallPeakZ = org.z
+		end
+	end
+
+	-- Arm the safety roll without stripping IN_DUCK (avoids Z-City AntiCrouchSpam penalty).
+	-- 2.21.7: a *held* Ctrl (or Shift) is enough - you no longer have to press it again in mid-air,
+	-- which is exactly what made the roll feel unreliable when you jumped off a roof already holding Ctrl.
+	local holdingBrace = duckNow or sprintNow
+	if velZ <= -300 and not onground and not ply:GetSliding() and (rollPressed or holdingBrace) then
 		ply:SetSafetyRollKeyTime(CT + 0.6)
 	end
 
+	-- Pre-emptive brace: while Ctrl is held during a real fall the protection window stays open ahead of
+	-- the impact, so Z-City's fallStun/ragdoll is already blocked when the ground arrives.
+	if holdingBrace and not onground and not ply:GetSliding() and velZ <= -250 then
+		ply._BRZBraced = true
+		ply._BRZBracedUntil = CT + 0.3
+	end
+
 	local isArming = CT < ply:GetSafetyRollKeyTime()
+	if CT >= ply:GetSafetyRollTime() then
+		ply._BRZRollSlowFactor = nil
+		ply._BRZRollSeconds = nil
+		ply._BRZRollVariant = nil
+	end
+
 	if onground and not isArming and CT >= ply:GetSafetyRollTime() then
 		local vel = mv:GetVelocity()
 		vel.z = 0
@@ -120,6 +180,11 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 				rollSpeed = 250 * mobility
 			else
 				rollSpeed = math.Clamp(ply._BeatrunLastGroundSpeed or 250, 220, 380) * mobility
+			end
+
+			-- A roll that absorbed a big fall carries less speed forward
+			if ply._BRZRollSlowFactor and CT < ply:GetSafetyRollTime() then
+				rollSpeed = rollSpeed * ply._BRZRollSlowFactor
 			end
 
 			mv:SetMaxSpeed(rollSpeed)
@@ -155,8 +220,27 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	local hardCap = math.max(maxSafeSpeed, 3000)
 	if speed < cvRollMinSpeed:GetFloat() or speed > hardCap then return end
 
+	-- Height gate (2.21.7): the roll is the answer to a real fall, not to a step down or a normal jump.
+	local fallHeight = math.max(0, (ply._BRZFallPeakZ or ply:GetPos().z) - ply:GetPos().z)
+	if ply._BRZLastFallHeight and ply._BRZLastFallHeight > fallHeight then
+		fallHeight = ply._BRZLastFallHeight
+	end
+
+	local minHeight = cvRollMinHeight and cvRollMinHeight:GetFloat() or 70
+	if fallHeight < minHeight then
+		if cvRollDebugLog and cvRollDebugLog:GetBool() then
+			print(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - too low for a roll", fallHeight, speed))
+		end
+		return
+	end
+
+	-- Big fall = the heavy variant: longer roll, crouched pose, wider protection window, more stamina.
+	local bigHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 260
+	local bigFall = fallHeight >= bigHeight
+
 	if cvRollDebugLog and cvRollDebugLog:GetBool() then
-		print(string.format("[Beatrun Z-City] landing speed %.0f - roll accepted", speed))
+		print(string.format("[Beatrun Z-City] landing speed %.0f, fall height %.0f (%s) - roll accepted",
+			speed, fallHeight, bigFall and "big" or "small"))
 	end
 
 	local tr = util.TraceLine({
@@ -166,9 +250,13 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	})
 	if tr.HitNormal and tr.HitNormal:Angle().x > 314 then return end
 
-	ply._BeatrunRollHandledUntil = CT + 0.15
+	local protectTime = math.Clamp(1.7 + fallHeight / 170, 2.5, 4.5)
+
+	ply._BeatrunRollHandledUntil = CT + 0.16
 	ply:SetSafetyRollKeyTime(0)
-	ply._BRZRollProtectUntil = CT + 2.5
+	ply._BRZRollProtectUntil = CT + protectTime
+	ply._BRZRollHeight = fallHeight
+	ply._BRZRollVariant = bigFall and 2 or 1
 
 	local mobility = BeatrunGetMobilityFactor(ply)
 	ply:SetRollLoss(mobility < 0.75)
@@ -193,19 +281,29 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- Beatrun_RollAnim 0: a plain landing instead of a rolling one - no forward push, shorter window
 	local useRoll = not (cvRollAnim and cvRollAnim:GetInt() == 0)
 
+	-- How long the roll owns the player: a drop from a roof rolls noticeably longer than a fence hop.
+	local rollSeconds = math.Clamp(0.85 + fallHeight / 520, 0.85, 1.7)
+	if bigFall then rollSeconds = math.min(rollSeconds, 1.9) end
+	ply._BRZRollSeconds = rollSeconds
+
 	if isLandInPlace or not useRoll then
 		ply:SetSafetyRollAng(landang)
-		ply:SetSafetyRollTime(CT + 0.6)
+		ply:SetSafetyRollTime(CT + math.min(rollSeconds, 0.8))
 	else
 		ply:SetSafetyRollAng(ang)
-		ply:SetSafetyRollTime(CT + 1.0)
+		ply:SetSafetyRollTime(CT + rollSeconds)
+	end
+
+	-- The heavier the fall, the less of it is turned into a forward sprint - you absorb, you don't launch.
+	if bigFall and not isLandInPlace then
+		ply._BRZRollSlowFactor = math.Clamp(1 - (fallHeight - bigHeight) / 2600, 0.62, 1)
 	end
 
 	-- Immediately stow any held firearm/melee/item to bare hands when entering the safety roll
-	HolsterWeaponForRoll(ply)
+	HolsterWeaponForTrick(ply)
 
 	if SERVER then
-		BeatrunConsumeStamina(ply, math.Clamp(speed / 38, 8, 22))
+		BeatrunConsumeStamina(ply, math.Clamp(speed / 38 + fallHeight / 55, 8, 34))
 		if not isLandInPlace then
 			timer.Simple(0.15, function()
 				if not IsValid(ply) or IsValid(ply.FakeRagdoll) then return end
@@ -232,17 +330,19 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	end
 
 	if CLIENT and IsFirstTimePredicted() and BeatrunRollAnimStart then
-		BeatrunRollAnimStart(isLandInPlace)
+		BeatrunRollAnimStart(isLandInPlace, bigFall)
 	elseif SERVER then
 		if game.SinglePlayer() then
 			net.Start("RollAnimSP")
 				net.WriteBool(isLandInPlace)
+				net.WriteBool(bigFall)
 				net.Send(ply)
 		else
 			-- Dedicated server: push the animation to the owning client too, so it never depends on
 			-- prediction alone (that was why the roll sometimes never played for the player himself).
 			net.Start("Beatrun_ZC_RollStart")
 				net.WriteBool(isLandInPlace)
+				net.WriteBool(bigFall)
 				net.Send(ply)
 		end
 	end
@@ -260,7 +360,7 @@ BeatrunAddOrderedHook("StartCommand", "zz_BeatrunZCity_RollHolster", function(pl
 	if not BeatrunCanSlideOrRoll(ply) then return end
 
 	if ply.GetSafetyRollTime and CurTime() < ply:GetSafetyRollTime() then
-		HolsterWeaponForRoll(ply, cmd)
+		HolsterWeaponForTrick(ply, cmd)
 		cmd:RemoveKey(IN_ATTACK)
 		cmd:RemoveKey(IN_ATTACK2)
 	end
@@ -288,10 +388,21 @@ local function InstallFallStunGuard()
 	return true
 end
 
+-- 2.21.7: actually install that guard. If Z-City's fallStun is registered before our roll hook it would
+-- ragdoll the player on a >600 impact before the roll is ever asked about it - this closes that hole.
+-- Retried a few times because the gamemode and other addons register their hooks at their own pace.
+timer.Simple(0, InstallFallStunGuard)
+timer.Simple(1, InstallFallStunGuard)
+timer.Simple(5, InstallFallStunGuard)
+hook.Add("InitPostEntity", "BeatrunZCity_FallStunGuard", InstallFallStunGuard)
+hook.Add("OnReloaded", "BeatrunZCity_FallStunGuard", InstallFallStunGuard)
+
 local cvSlideNoDamage = GetConVar("Beatrun_ZCity_SlideNoDamage")
 
 local function Protected(ply)
 	if ply._BRZRollProtectUntil and ply._BRZRollProtectUntil > CurTime() then return true end
+	-- Pre-emptive brace (2.21.7): Ctrl was held during the fall, so the impact is already blocked.
+	if ply._BRZBraced and ply._BRZBracedUntil and ply._BRZBracedUntil > CurTime() then return true end
 	if cvSlideNoDamage and cvSlideNoDamage:GetBool() and ply:GetSliding() then return true end
 	return false
 end
@@ -339,6 +450,14 @@ if SERVER then
 		local maxSafeSpeed = cvMaxSafeRollSpeed:GetFloat()
 		local rolled = (ply._BeatrunRollHandledUntil and ply._BeatrunRollHandledUntil >= CT)
 			or (CT <= ply:GetSafetyRollKeyTime())
+
+		-- Height gate has to be mirrored here: a drop that is too small for a roll keeps Z-City's own
+		-- fall damage instead of being silently negated by a held Ctrl.
+		local fallHeight = math.max(0, (ply._BRZFallPeakZ or ply:GetPos().z) - ply:GetPos().z)
+		if ply._BRZLastFallHeight and ply._BRZLastFallHeight > fallHeight then
+			fallHeight = ply._BRZLastFallHeight
+		end
+		if fallHeight < (cvRollMinHeight and cvRollMinHeight:GetFloat() or 70) then return end
 
 		local hardCap = math.max(maxSafeSpeed, 3000)
 		if not rolled or speed > hardCap then

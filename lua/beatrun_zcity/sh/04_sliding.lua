@@ -254,6 +254,12 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 		return
 	end
 
+	-- 2.21.7: a ledge grab / hang / pull-up owns the player, a slide must not start on top of it
+	if BeatrunZCityIsClimbing and BeatrunZCityIsClimbing(ply) then
+		ply._BeatrunWasDucking = mv:KeyDown(IN_DUCK)
+		return
+	end
+
 	local CT = CurTime()
 	local sliding = ply:GetSliding()
 	local autohold = cvAutoHold and cvAutoHold:GetBool()

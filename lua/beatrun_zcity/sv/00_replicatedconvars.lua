@@ -15,6 +15,15 @@ local ALLOWED_CONVARS = {
 	["beatrun_zcity_slideyawlimit"] = true,
 	["beatrun_rollanim"] = true,
 	["beatrun_zcity_rollholster"] = true,
+	["beatrun_zcity_climbenabled"] = true,
+	["beatrun_zcity_climbhangheight"] = true,
+	["beatrun_zcity_climbmaxledgeheight"] = true,
+	["beatrun_zcity_climbreach"] = true,
+	["beatrun_zcity_climbholddelay"] = true,
+	["beatrun_zcity_climbheavetime"] = true,
+	["beatrun_zcity_climbcooldown"] = true,
+	["beatrun_zcity_rollminheight"] = true,
+	["beatrun_zcity_rollbigheight"] = true,
 }
 
 net.Receive("Beatrun_ChangeConvar", function(_, ply)
