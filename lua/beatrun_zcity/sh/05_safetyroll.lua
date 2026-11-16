@@ -213,6 +213,35 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 	end
 end, "HOOK_LOW")
 
+-- ---------------------------------------------------------------------------
+-- One place that maps a fall height to a trick, shared by the client and the server so the animation
+-- can never disagree with the movement:
+--   1 = knee landing  "land" / "landgun"                 (below Beatrun_ZCity_RollBigHeight)
+--   2 = real roll     "meroll" / "merollgun"             (RollBigHeight .. 2 x RollBigHeight)
+--   3 = low roll      "merollcrouch" / "merollguncrouch" (2 x RollBigHeight and above)
+-- Beatrun_RollAnim 1 forces 2/3, 2 forces 1.
+-- ---------------------------------------------------------------------------
+function BeatrunRollVariantForHeight(fallHeight)
+	fallHeight = math.max(0, fallHeight or 0)
+
+	local bigHeight = cvRollBigHeight and cvRollBigHeight:GetFloat() or 350
+	local rollMode = cvRollAnim and cvRollAnim:GetInt() or 0
+
+	local useRoll
+	if rollMode == 2 then
+		useRoll = false
+	elseif rollMode == 1 then
+		useRoll = true
+	else
+		useRoll = fallHeight >= bigHeight
+	end
+
+	local lowRoll = useRoll and fallHeight >= bigHeight * 2
+	local variant = useRoll and (lowRoll and 3 or 2) or 1
+
+	return variant, useRoll, lowRoll, bigHeight
+end
+
 -- Runs BEFORE Z-City's fallStun and returns true only when a timed roll mitigates the impact
 local function TrySafetyRoll(ply, water, floater, speed)
 	if not IsValid(ply) or not ply:IsPlayer() then return end
@@ -287,19 +316,8 @@ local function TrySafetyRoll(ply, water, floater, speed)
 
 	local standingStill = horizVel:Length() < 160 or ply:KeyDown(IN_BACK)
 
-	-- 2.21.8: the fall height decides which trick you get, not a convar.
-	--   Beatrun_RollAnim 0 (default) -> height decides: >= RollBigHeight = real roll, lower = knee landing
-	--   Beatrun_RollAnim 1          -> always the roll animation
-	--   Beatrun_RollAnim 2          -> always the knee landing
-	local rollMode = cvRollAnim and cvRollAnim:GetInt() or 0
-	local useRoll
-	if rollMode == 2 then
-		useRoll = false
-	elseif rollMode == 1 then
-		useRoll = true
-	else
-		useRoll = bigFall
-	end
+	-- 2.21.14: the variant comes from the shared helper, so client and server always agree on it.
+	local variant, useRoll, lowRoll, bigH = BeatrunRollVariantForHeight(fallHeight)
 
 	-- Beatrun_RollAlways 0 keeps the old escape hatch: standing still / holding back = knee landing
 	if useRoll and standingStill and not ply:KeyDown(IN_BACK) and (not cvRollAlways or cvRollAlways:GetBool()) then
@@ -309,10 +327,13 @@ local function TrySafetyRoll(ply, water, floater, speed)
 		useRoll = false
 	end
 
-	-- An extremely long drop gets the low, crouched roll on top of the normal one
-	local lowRoll = useRoll and fallHeight >= bigHeight * 2
+	ply._BRZRollVariant = variant
 
-	ply._BRZRollVariant = useRoll and (lowRoll and 3 or 2) or 1
+	if cvRollDebugLog and cvRollDebugLog:GetBool() then
+		local names = { [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
+		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [knee < %.0f, roll %.0f..%.0f, low roll >= %.0f]",
+			fallHeight, variant, names[variant], bigH, bigH, bigH * 2 - 1, bigH * 2))
+	end
 
 	-- How long the trick owns the player: a drop from a roof rolls noticeably longer than a fence hop.
 	local rollSeconds = math.Clamp(0.85 + fallHeight / 520, 0.85, 1.7)
@@ -365,21 +386,20 @@ local function TrySafetyRoll(ply, water, floater, speed)
 		end)
 	end
 
-	if CLIENT and IsFirstTimePredicted() and BeatrunRollAnimStart then
-		BeatrunRollAnimStart(isLandInPlace, lowRoll)
-	elseif SERVER then
+	-- 2.21.14: the animation is driven by the authoritative decision only. Client prediction used to
+	-- start it as well, and when the client and the server measured the fall height slightly
+	-- differently the same jump could show "land" one time and "meroll" the next - the so called
+	-- "roll works at 350, then at 700" flip-flop. Now exactly one trigger exists, and it carries the
+	-- variant number itself.
+	if SERVER then
 		if game.SinglePlayer() then
 			net.Start("RollAnimSP")
-				net.WriteBool(isLandInPlace)
-				net.WriteBool(lowRoll)
-				net.Send(ply)
+				net.WriteInt(variant, 8)
+			net.Send(ply)
 		else
-			-- Dedicated server: push the animation to the owning client too, so it never depends on
-			-- prediction alone (that was why the roll sometimes never played for the player himself).
 			net.Start("Beatrun_ZC_RollStart")
-				net.WriteBool(isLandInPlace)
-				net.WriteBool(lowRoll)
-				net.Send(ply)
+				net.WriteInt(variant, 8)
+			net.Send(ply)
 		end
 	end
 

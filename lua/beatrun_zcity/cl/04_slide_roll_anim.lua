@@ -197,9 +197,20 @@ end
 
 -- kneeLanding = the Mirror's Edge "land" pose (drop onto one knee, no forward launch),
 -- lowRoll     = the extra low/crouched roll used for very long drops
-function BeatrunRollAnimStart(kneeLanding, lowRoll)
+-- variant: 1 = knee landing ("land"), 2 = roll ("meroll"), 3 = low roll ("merollcrouch").
+-- The number is decided on the server (BeatrunRollVariantForHeight) and sent over the network, so the
+-- animation always matches the movement - it cannot flip between "land" and "meroll" on the same fall.
+function BeatrunRollAnimStart(variant, lowRollFlag)
 	local ply = LocalPlayer()
 	if not IsValid(ply) or not BeatrunCanSlideOrRoll(ply) then return end
+
+	-- old call style (kneeLanding, lowRoll) still works
+	if type(variant) == "boolean" then
+		variant = variant and 1 or (lowRollFlag and 3 or 2)
+	end
+
+	local kneeLanding = (variant == 1)
+	local lowRoll = (variant == 3)
 
 	local holster = not cvRollHolster or cvRollHolster:GetBool()
 	local holdingWeapon = false
@@ -259,8 +270,8 @@ function BeatrunRollAnimStart(kneeLanding, lowRoll)
 
 	local cvDbg2 = GetConVar("Beatrun_RollDebugLog")
 	if cvDbg2 and cvDbg2:GetBool() then
-		print(string.format("[Beatrun Z-City] roll anim start: %s (knee=%s low=%s) at %.2f",
-			tostring(animName), tostring(kneeLanding), tostring(lowRoll), now))
+		print(string.format("[Beatrun Z-City] roll anim start: %s (variant %d) at %.2f",
+			tostring(animName), variant, now))
 	end
 
 	slideState = "idle"
@@ -333,7 +344,7 @@ hook.Add("Think", "BeatrunZCity_SlideRollSync", function()
 	if rolling and not sliding and rollEndTime > lastRollToken and not IsValid(BodyAnim) then
 		local ang = ply:GetSafetyRollAng()
 		local variant = ply._BRZRollVariant or 2
-		BeatrunRollAnimStart(variant == 1, variant == 3)
+		BeatrunRollAnimStart(variant)
 	end
 end)
 
@@ -351,9 +362,8 @@ net.Receive("Beatrun_ZC_SlideEnd", function()
 end)
 
 net.Receive("Beatrun_ZC_RollStart", function()
-	local kneeLanding = net.ReadBool()
-	local lowRoll = net.ReadBool()
-	BeatrunRollAnimStart(kneeLanding, lowRoll)
+	local variant = net.ReadInt(8)
+	BeatrunRollAnimStart(variant)
 end)
 
 if game.SinglePlayer() then
@@ -369,8 +379,7 @@ if game.SinglePlayer() then
 	end)
 
 	net.Receive("RollAnimSP", function()
-		local kneeLanding = net.ReadBool()
-		local lowRoll = net.ReadBool()
-		BeatrunRollAnimStart(kneeLanding, lowRoll)
+		local variant = net.ReadInt(8)
+		BeatrunRollAnimStart(variant)
 	end)
 end
