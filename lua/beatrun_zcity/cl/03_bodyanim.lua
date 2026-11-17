@@ -88,6 +88,18 @@ local lastNativeCamPos = nil
 local lastNativeCamAng = nil
 local lastAppliedFrame = -1
 
+-- 2.21.31: smooth exit of the roll / knee-landing camera.
+-- The old hand-off was a fixed 0.14 s straight slide (position at 7/s) with the angles finishing 1.4x
+-- faster than the position, so the camera stopped dead in the middle of its motion - that is the jerk
+-- that could be felt at the end of a roll. The exit is now a smoothstep from the last animation frame
+-- to Z-City's own (live) camera: zero speed at both ends, the exact same curve for position and for
+-- angles, and it ends only once the camera has really arrived. Values are constants, not convars, so
+-- every install gets the identical exit.
+local ROLL_EXIT_TIME = 0.24      -- seconds of the hand-off
+local ROLL_EXIT_MAX_DIST = 400   -- units; anything further is a teleport, snap instead of flying
+local rollExitT = 0              -- seconds spent in the current hand-off
+BeatrunZCityExitBlend = 0        -- seconds left in the hand-off (for the debug HUD)
+
 local lastangy = 0
 local viewtiltlerp = Vector(0, 0, 0)
 local ViewTiltAngle = Angle(0, 0, 0)
@@ -432,12 +444,19 @@ function RemoveBodyAnim(smooth)
 	if canSmooth then
 		attach = {
 			Pos = Vector(lastattachpos),
-			Ang = Angle(lastattachang)
+			Ang = Angle(lastattachang),
+			-- Where Z-City's camera was on the last animated frame. Only a fallback: the blend follows
+			-- the live camera each frame, so it stays correct while the player keeps moving.
+			TargetPos = lastNativeCamPos and Vector(lastNativeCamPos) or nil,
+			TargetAng = lastNativeCamAng and Angle(lastNativeCamAng) or nil
 		}
+		rollExitT = 0
 		endlerp = 0
 	else
 		attach = nil
 		endlerp = 0
+		rollExitT = 0
+		BeatrunZCityExitBlend = 0
 	end
 
 	if IsValid(ply) then
@@ -1534,16 +1553,42 @@ local function ApplyBodyAnimToView(ply, view, isFallback)
 
 		BodyAnim:SetAngles(oldang)
 	elseif attach ~= nil then
-		endlerp = math.Approach(endlerp, 1, RealFrameTime() * 7)
-		local targetPos = lastNativeCamPos or ply:EyePos()
-		local targetAng = lastNativeCamAng or ply:EyeAngles()
+		-- 2.21.31 smooth exit (see ROLL_EXIT_TIME at the top of this file).
+		local targetPos = lastNativeCamPos or attach.TargetPos or ply:EyePos()
+		local targetAng = lastNativeCamAng or attach.TargetAng or ply:EyeAngles()
 
-		view.origin = LerpVector(endlerp, attach.Pos, targetPos)
-		view.angles = LerpAngle(math.min(1, endlerp * 1.4), attach.Ang, targetAng)
-
-		if endlerp >= 1 then
+		-- A jump this big is not an exit, it is a teleport / respawn: hand the camera straight back.
+		if (targetPos - attach.Pos):Length() > ROLL_EXIT_MAX_DIST then
 			attach = nil
 			endlerp = 0
+			rollExitT = 0
+			BeatrunZCityExitBlend = 0
+			return
+		end
+
+		rollExitT = rollExitT + math.min(math.max(RealFrameTime(), FrameTime()), 0.1)
+		local p = math.Clamp(rollExitT / ROLL_EXIT_TIME, 0, 1)
+		-- Smoothstep: E(0) = 0, E(1) = 1 and the speed is zero at BOTH ends, so the camera neither
+		-- starts nor stops with a kick. Position and angles share the same progress on purpose: with
+		-- two different speeds the view turned while the camera was still sliding, which read as a jerk.
+		local e = p * p * (3 - 2 * p)
+		endlerp = e
+
+		view.origin = LerpVector(e, attach.Pos, targetPos)
+		view.angles = LerpAngle(e, attach.Ang, targetAng)
+
+		BeatrunZCityCamAnchor = "exit blend"
+		BeatrunZCityExitBlend = math.max(0, ROLL_EXIT_TIME - rollExitT)
+
+		if p >= 1 then
+			-- Arrived: the view already equals Z-City's own camera, so handing it back is a no-op for
+			-- the eye instead of a cut while the camera was still travelling.
+			view.origin = Vector(targetPos)
+			view.angles = Angle(targetAng)
+			attach = nil
+			endlerp = 0
+			rollExitT = 0
+			BeatrunZCityExitBlend = 0
 		end
 		return isFallback and view or nil
 	end
