@@ -240,6 +240,9 @@ local function StartGrab(ply, mv, ledge, CT, fromGround)
 		ply:EmitSound("WallrunRelease.Concrete")
 		if hard then ply:EmitSound("Cloth.FallShortMedium") end
 
+		-- 2.21.35: the others see the grab (and, when it ends, the hang pose - see cl/10_remote_tricks.lua)
+		BeatrunZCBroadcastTrick(ply, hard and "hanghardstart2" or "hanghardstart", 0, hard and 1.25 or 1.1, "oneshot")
+
 		if not game.SinglePlayer() then
 			net.Start("Beatrun_ZC_ClimbGrab")
 				net.WriteAngle(ledge.wallang)
@@ -268,6 +271,9 @@ StartHeave = function(ply, mv, CT, low)
 
 	if SERVER then
 		ply:EmitSound("Cloth.MovementWalk")
+
+		BeatrunZCBroadcastTrick(ply, low and "vaultonto" or "hangheaveup", low and 0.45 or math.max(0.2, cvHeaveTime:GetFloat()), 1, "oneshot")
+
 		if not game.SinglePlayer() then
 			net.Start("Beatrun_ZC_ClimbHeave")
 				net.WriteAngle(ply._BRZClimbAng or angle_zero)
@@ -302,6 +308,7 @@ local function FinishHeave(ply, mv, CT)
 
 	if SERVER then
 		ply:EmitSound("Cloth.MovementWalk")
+		BeatrunZCBroadcastTrickStop(ply)
 		if not game.SinglePlayer() then
 			net.Start("Beatrun_ZC_ClimbEnd")
 				net.WriteBool(true)
@@ -346,6 +353,7 @@ local function ReleaseGrab(ply, mv, CT, jumpOff)
 
 	if SERVER then
 		ply:EmitSound("Cloth.MovementRun")
+		BeatrunZCBroadcastTrickStop(ply)
 		if not game.SinglePlayer() then
 			net.Start("Beatrun_ZC_ClimbEnd")
 				net.WriteBool(false)
@@ -356,6 +364,7 @@ end
 
 local function CancelClimb(ply)
 	ClearClimbState(ply)
+	if SERVER then BeatrunZCBroadcastTrickStop(ply) end
 	if CLIENT and IsFirstTimePredicted() and isfunction(BeatrunZCityClimbAnimEnd) then
 		BeatrunZCityClimbAnimEnd(false)
 	end

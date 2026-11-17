@@ -125,6 +125,38 @@ function BeatrunCanSlideOrRoll(ply)
 	return true
 end
 
+-- 2.21.35: make the trick visible to everyone else.
+-- Nothing is streamed: the server names the pose, its duration, its speed and how it is played
+-- ("oneshot" = play once, "loop" = repeat, "freeze" = hold the last frame), and every other client
+-- rebuilds the animation locally on top of that player's own model (see cl/10_remote_tricks.lua).
+local BEATRUN_TRICK_MODES = { oneshot = 0, loop = 1, freeze = 2 }
+
+function BeatrunZCBroadcastTrick(ply, anim, dur, speed, mode)
+	if not SERVER then return end
+	if not IsValid(ply) or not isstring(anim) or anim == "" then return end
+
+	net.Start("Beatrun_ZC_RemoteTrick")
+		net.WriteEntity(ply)
+		net.WriteString(anim)
+		net.WriteFloat(tonumber(dur) or 0)
+		net.WriteFloat(tonumber(speed) or 1)
+		net.WriteUInt(BEATRUN_TRICK_MODES[mode or "oneshot"] or 0, 2)
+	net.Broadcast()
+end
+
+function BeatrunZCBroadcastTrickStop(ply)
+	if not SERVER then return end
+	if not IsValid(ply) then return end
+
+	net.Start("Beatrun_ZC_RemoteTrick")
+		net.WriteEntity(ply)
+		net.WriteString("")
+		net.WriteFloat(0)
+		net.WriteFloat(1)
+		net.WriteUInt(0, 2)
+	net.Broadcast()
+end
+
 function BeatrunGetMobilityFactor(ply)
 	if not BeatrunHasOrganism(ply) or not cvOrganism:GetBool() then return 1 end
 	local org = ply.organism

@@ -177,6 +177,13 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 
 	local isArming = CT < ply:GetSafetyRollKeyTime()
 	if CT >= ply:GetSafetyRollTime() then
+		-- 2.21.35: the roll window is over - the other clients drop the pose right now instead of
+		-- waiting out its full duration (an interrupted roll would otherwise play to the end).
+		if ply._BRZRemoteRoll then
+			ply._BRZRemoteRoll = nil
+			BeatrunZCBroadcastTrickStop(ply)
+		end
+
 		ply._BRZRollSlowFactor = nil
 		ply._BRZRollSeconds = nil
 		ply._BRZRollVariant = nil
@@ -361,7 +368,7 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.34"
+local ADDON_VERSION = "2.21.35"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
@@ -565,6 +572,11 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	HolsterWeaponForTrick(ply)
 
 	if SERVER then
+		-- 2.21.35: every other client plays the same pose on this player for the same amount of time.
+		local remoteAnim = isLandInPlace and "land" or ((variant == 3) and "merollcrouch" or "meroll")
+		BeatrunZCBroadcastTrick(ply, remoteAnim, isLandInPlace and math.Clamp(rollSeconds, 0.6, 0.85) or rollSeconds, 1, "oneshot")
+		ply._BRZRemoteRoll = true
+
 		BeatrunConsumeStamina(ply, math.Clamp(speed / 38 + fallHeight / 55, 8, 34))
 		if not isLandInPlace then
 			timer.Simple(0.15, function()

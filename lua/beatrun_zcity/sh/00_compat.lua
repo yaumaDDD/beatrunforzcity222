@@ -94,6 +94,10 @@ if SERVER then
 	util.AddNetworkString("Beatrun_ZC_RollStart")
 	util.AddNetworkString("Beatrun_ZC_SlideAim")
 
+	-- 2.21.35: trick poses for the OTHER players (server -> every client). The owning client builds his
+	-- own animation as before; this one only carries the pose name + timing, nothing is streamed.
+	util.AddNetworkString("Beatrun_ZC_RemoteTrick")
+
 	-- Ledge climb / hang animation triggers (server -> owning client)
 	util.AddNetworkString("Beatrun_ZC_ClimbGrab")
 	util.AddNetworkString("Beatrun_ZC_ClimbHeave")

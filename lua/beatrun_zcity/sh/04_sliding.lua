@@ -220,6 +220,9 @@ local function EndSlideState(ply, mv, blocked, jumped, slippery, fellOff)
 	if CLIENT and IsFirstTimePredicted() and BeatrunSlideAnimEnd then
 		BeatrunSlideAnimEnd((slippery or fellOff) and true or false, blocked and true or false, fellOff and true or false)
 	elseif SERVER then
+		-- 2.21.35: drop the remote slide pose (before the end pose, so nobody keeps looping forever)
+		BeatrunZCBroadcastTrickStop(ply)
+
 		if game.SinglePlayer() then
 			net.Start("sliding_spend")
 				net.WriteBool(blocked and true or false)
@@ -372,6 +375,11 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_Slide", function(ply, mv, cm
 				net.Start("Beatrun_ZC_SlideStart")
 				net.Send(ply)
 			end
+		end
+
+		-- 2.21.35: the other clients loop the slide pose until we send the stop below
+		if SERVER then
+			BeatrunZCBroadcastTrick(ply, "meslideloop", 0, 1, "loop")
 		end
 
 		sliding = true
