@@ -15,6 +15,11 @@
 
 local MODE_ONESHOT, MODE_LOOP, MODE_FREEZE = 0, 1, 2
 
+-- 2.21.36: the pose does not disappear in one frame any more. When a trick ends the animation keeps its
+-- last frame and fades out over FADE_TIME while the player's own model comes back underneath it - the
+-- same "smooth exit" the owner gets on his camera, seen by everyone else.
+local FADE_TIME = 0.22
+
 -- [Player] = { rig, body, rigModel, anim, seqDur, start, dur, speed, mode }
 local remote = {}
 
@@ -32,6 +37,18 @@ local function RestorePlayerRender(ply)
 	-- false means "there was no RenderOverride at all" - put back nil, not a false function
 	ply.RenderOverride = ply._BRZRemoteTrickRender ~= false and ply._BRZRemoteTrickRender or nil
 	ply._BRZRemoteTrickRender = nil
+end
+
+-- Fade the pose out instead of cutting it: the last frame is held, the player's own model is handed
+-- back immediately, and the draw hook blends the body copy away over FADE_TIME.
+local function BeginFade(ply, t)
+	if not t or t.fadeStart then return end
+
+	t.fadeStart = CurTime()
+	t.freezeCycle = (IsValid(t.rig) and t.rig:GetCycle()) or 0.999
+	t.alpha = 1
+
+	RestorePlayerRender(ply)
 end
 
 local function Clear(ply)
@@ -129,6 +146,8 @@ local function Play(ply, anim, dur, speed, mode)
 		t.dur = d
 	end
 
+	t.fadeStart = nil
+	t.alpha = nil
 	t.start = CurTime()
 end
 
@@ -143,7 +162,7 @@ net.Receive("Beatrun_ZC_RemoteTrick", function()
 	if not IsValid(ply) or ply == LocalPlayer() then return end
 
 	if anim == "" then
-		Clear(ply)
+		BeginFade(ply, remote[ply])
 	else
 		Play(ply, anim, dur, speed, mode)
 	end
@@ -163,7 +182,21 @@ hook.Add("Think", "BeatrunZCity_RemoteTricks", function()
 		local loopStale = (t.mode == MODE_LOOP) and (running > 20 or
 			(isfunction(ply.GetSliding) and not ply:GetSliding()))
 
-		if not IsValid(ply) or not IsValid(t.rig) or not ply:Alive() or ply:InVehicle() or loopStale then
+		if not IsValid(ply) or not IsValid(t.rig) or not ply:Alive() or ply:InVehicle() then
+			actions[#actions + 1] = { ply = ply, clear = true }
+		elseif t.fadeStart ~= nil then
+			-- Fading out: hold the last frame where it was and let the body copy vanish smoothly.
+			local k = (now - t.fadeStart) / FADE_TIME
+			if k >= 1 or loopStale then
+				actions[#actions + 1] = { ply = ply, clear = true }
+			else
+				t.alpha = math.max(0, 1 - k)
+				t.rig:SetPos(ply:GetPos())
+				t.rig:SetAngles(Angle(0, ply:EyeAngles().y, 0))
+				t.rig:SetCycle(math.Clamp(t.freezeCycle or 0.999, 0, 1))
+				t.rig:SetupBones()
+			end
+		elseif loopStale then
 			actions[#actions + 1] = { ply = ply, clear = true }
 		else
 			local frac = ((now - (t.start or now)) / math.max(0.05, t.dur or 1)) * (t.speed or 1)
@@ -187,7 +220,8 @@ hook.Add("Think", "BeatrunZCity_RemoteTricks", function()
 					-- The grab animation is over, the player keeps hanging until the pull-up arrives.
 					actions[#actions + 1] = { ply = ply, nextAnim = "hangpose" }
 				else
-					actions[#actions + 1] = { ply = ply, clear = true }
+					-- 2.21.36: end of the trick - fade the last frame out instead of cutting it.
+					actions[#actions + 1] = { ply = ply, fade = true }
 				end
 			end
 		end
@@ -198,6 +232,8 @@ hook.Add("Think", "BeatrunZCity_RemoteTricks", function()
 		local a = actions[i]
 		if a.clear then
 			Clear(a.ply)
+		elseif a.fade then
+			BeginFade(a.ply, remote[a.ply])
 		elseif a.nextAnim then
 			Play(a.ply, a.nextAnim, 0, 1, MODE_FREEZE)
 		end
@@ -210,7 +246,14 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_RemoteTricksDraw", function(
 
 	for ply, t in pairs(remote) do
 		if IsValid(t.body) then
-			t.body:DrawModel()
+			local a = t.alpha
+			if isnumber(a) and a < 1 then
+				render.SetBlend(math.max(0, a))
+				t.body:DrawModel()
+				render.SetBlend(1)
+			else
+				t.body:DrawModel()
+			end
 		end
 	end
 end)
