@@ -3,6 +3,23 @@
 local REP = { FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_NOTIFY }
 local REP_PLAIN = { FCVAR_REPLICATED, FCVAR_ARCHIVE }
 
+-- 2.21.33: nothing is printed to the console by default. One command turns the whole log on:
+--   Beatrun_ZCity_Log 1      (0 = silence again; the old Beatrun_RollDebugLog keeps working)
+-- Diagnostic commands (beatrun_zcity_version, beatrun_zcity_debug, beatrun_zcity_camtest) print when
+-- you type them, whatever this switch says.
+function BeatrunZCityLogEnabled()
+	local cv = GetConVar("Beatrun_ZCity_Log")
+	if cv and cv:GetBool() then return true end
+	local old = GetConVar("Beatrun_RollDebugLog")
+	if old and old:GetBool() then return true end
+	return false
+end
+
+function BeatrunZCityLogLine(text)
+	if not BeatrunZCityLogEnabled() then return end
+	print(tostring(text))
+end
+
 -- Slide & Roll feature toggles and tuning
 CreateConVar("Beatrun_ZCity_SlideEnabled", "1", REP, "Enable Beatrun sprinting slide in Z-City", 0, 1)
 CreateConVar("Beatrun_ZCity_RollEnabled", "1", REP, "Enable Beatrun fall safety roll in Z-City", 0, 1)
@@ -62,7 +79,6 @@ CreateClientConVar("Beatrun_TrickCamMatchEye", "0", true, false, "Hold the trick
 	CreateClientConVar("Beatrun_TrickCamMode", "0", true, false, "Trick camera mode: 0 = first person on the animation (like Beatrun), 1 = third person looking at the animated body", 0, 1)
 	CreateClientConVar("Beatrun_TrickCamDistance", "150", true, false, "Third person trick camera distance behind the character (units)", 40, 400)
 	CreateClientConVar("Beatrun_TrickCamHeight", "45", true, false, "Third person trick camera height above the character (units)", -50, 200)
-	CreateClientConVar("Beatrun_ZCity_DebugHUD", "1", true, false, "Show the on-screen Beatrun Z-City camera/trick diagnostics panel", 0, 1)
 end
 
 if SERVER then

@@ -1670,7 +1670,7 @@ local function WrapCalcViewHooks()
 
 	if not wrapAnnounced and (BeatrunZCityCameraWrapped or 0) > 0 then
 		wrapAnnounced = true
-		print("[Beatrun Z-City] trick camera: wrapped " .. tostring(BeatrunZCityCameraWrapped) .. " CalcView hook(s)")
+		BeatrunZCityLogLine("[Beatrun Z-City] trick camera: wrapped " .. tostring(BeatrunZCityCameraWrapped) .. " CalcView hook(s)")
 	end
 end
 

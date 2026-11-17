@@ -39,9 +39,8 @@ function BeatrunZCityClimbAnimGrab(ang, hard)
 	climbAnimState = 1
 	ClimbClampLimits()
 
-	local cvDbg = GetConVar("Beatrun_RollDebugLog")
-	if cvDbg and cvDbg:GetBool() then
-		print(string.format("[Beatrun Z-City] climb anim: grab %s (hard=%s, rig %s)",
+	if BeatrunZCityLogEnabled() then
+		BeatrunZCityLogLine(string.format("[Beatrun Z-City] climb anim: grab %s (hard=%s, rig %s)",
 			hard and "hanghardstart2" or "hanghardstart", tostring(hard), GetRigName()))
 	end
 
@@ -77,9 +76,8 @@ function BeatrunZCityClimbAnimHeave(ang, low)
 	climbAnimState = 2
 	ClimbClampLimits()
 
-	local cvDebug = GetConVar("Beatrun_RollDebugLog")
-	if cvDebug and cvDebug:GetBool() then
-		print(string.format("[Beatrun Z-City] climb anim: %s (%.2fs, rig %s)", seqName, dur, GetRigName()))
+	if BeatrunZCityLogEnabled() then
+		BeatrunZCityLogLine(string.format("[Beatrun Z-City] climb anim: %s (%.2fs, rig %s)", seqName, dur, GetRigName()))
 	end
 
 	StartBodyAnim({

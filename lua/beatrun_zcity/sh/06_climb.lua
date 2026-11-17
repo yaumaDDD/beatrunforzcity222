@@ -17,14 +17,13 @@ local cvReach = GetConVar("Beatrun_ZCity_ClimbReach")
 local cvHoldDelay = GetConVar("Beatrun_ZCity_ClimbHoldDelay")
 local cvHeaveTime = GetConVar("Beatrun_ZCity_ClimbHeaveTime")
 local cvCooldown = GetConVar("Beatrun_ZCity_ClimbCooldown")
-local cvDebugLog = GetConVar("Beatrun_RollDebugLog")
 
 local STATE_NONE, STATE_HANG, STATE_HEAVE = 0, 1, 2
 local LOW_HEAVE_TIME = 0.45
 
 local function Log(fmt, ...)
-	if cvDebugLog and cvDebugLog:GetBool() then
-		print("[Beatrun Z-City] " .. string.format(fmt, ...))
+	if BeatrunZCityLogEnabled() then
+		BeatrunZCityLogLine("[Beatrun Z-City] " .. string.format(fmt, ...))
 	end
 end
 

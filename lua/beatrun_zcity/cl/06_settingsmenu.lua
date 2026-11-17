@@ -89,8 +89,6 @@ hook.Add("PopulateToolMenu", "BeatrunZCity_ToolsMenu", function()
 		panel:CheckBox("#beatrun.toolsmenu.slideroll.autohold", "Beatrun_ZCity_SlideAutoHold")
 		panel:ControlHelp("#beatrun.toolsmenu.slideroll.autoholddesc")
 
-		panel:CheckBox("#beatrun.toolsmenu.slideroll.debughud", "Beatrun_ZCity_DebugHUD")
-
 		if LocalPlayer():IsAdmin() then
 			panel:Help("#beatrun.toolsmenu.zcity.name")
 			AddServerCheckbox(panel, "#beatrun.toolsmenu.slideroll.slideenabled", "Beatrun_ZCity_SlideEnabled")
@@ -177,8 +175,6 @@ concommand.Add("beatrun_settings", function()
 
 	form:CheckBox("#beatrun.toolsmenu.slideroll.autohold", "Beatrun_ZCity_SlideAutoHold")
 	form:ControlHelp("#beatrun.toolsmenu.slideroll.autoholddesc")
-
-	form:CheckBox("#beatrun.toolsmenu.slideroll.debughud", "Beatrun_ZCity_DebugHUD")
 
 	if LocalPlayer():IsAdmin() then
 		AddServerCheckbox(form, "#beatrun.toolsmenu.slideroll.slideenabled", "Beatrun_ZCity_SlideEnabled")

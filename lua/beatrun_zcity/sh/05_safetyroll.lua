@@ -13,7 +13,6 @@ local cvRollMinSpeed = GetConVar("Beatrun_ZCity_RollMinSpeed")
 local cvRollMinHeight = GetConVar("Beatrun_ZCity_RollMinHeight")
 local cvRollBigHeight = GetConVar("Beatrun_ZCity_RollBigHeight")
 local cvRollMaxHeight = GetConVar("Beatrun_ZCity_RollMaxHeight")
-local cvRollDebugLog = GetConVar("Beatrun_RollDebugLog")
 
 local rollTrace = {}
 
@@ -106,8 +105,8 @@ BeatrunAddOrderedHook("SetupMove", "zz_BeatrunZCity_SafetyRoll", function(ply, m
 			local peak = ply._BRZFallPeakZ
 			if peak and peak - org.z > 0 then
 				ply._BRZLastFallHeight = math.max(0, peak - org.z)
-				if cvRollDebugLog and cvRollDebugLog:GetBool() then
-					print(string.format("[Beatrun Z-City] fall height %.0f units", ply._BRZLastFallHeight))
+				if BeatrunZCityLogEnabled() then
+					BeatrunZCityLogLine(string.format("[Beatrun Z-City] fall height %.0f units", ply._BRZLastFallHeight))
 				end
 			else
 				ply._BRZLastFallHeight = 0
@@ -362,13 +361,13 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.32"
+local ADDON_VERSION = "2.21.33"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then
 		ply._BRZLastLanding = what
 	end
-	print(string.format("[Beatrun Z-City %s] landing: %s", ADDON_VERSION, what))
+	BeatrunZCityLogLine(string.format("[Beatrun Z-City %s] landing: %s", ADDON_VERSION, what))
 end
 
 -- The trick has the landing: the ragdoll Z-City fires on a hard landing must not run on top of it.
@@ -426,8 +425,8 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	local tappedAt = ply._BRZFallTappedAt
 	if not (ply._BRZFallArmed or (tappedAt and (CT - tappedAt) <= 4)) then
 		Decline(ply, "Ctrl was not tapped in the air")
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print(string.format("[Beatrun Z-City] no tap: arm=%s tapped=%s keyWindow=%.2f now=%.2f",
+		if BeatrunZCityLogEnabled() then
+			BeatrunZCityLogLine(string.format("[Beatrun Z-City] no tap: arm=%s tapped=%s keyWindow=%.2f now=%.2f",
 				tostring(ply._BRZFallArmed), tostring(tappedAt), ply:GetSafetyRollKeyTime() or 0, CT))
 		end
 		return
@@ -452,16 +451,16 @@ local function TrySafetyRoll(ply, water, floater, speed)
 
 	if fallHeight > MAX_HEIGHT then
 		Decline(ply, string.format("a %.0f unit fall is above %d - no trick can save it", fallHeight, MAX_HEIGHT))
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print(string.format("[Beatrun Z-City] fall %.0f units is above %d - no trick, Z-City takes the landing", fallHeight, MAX_HEIGHT))
+		if BeatrunZCityLogEnabled() then
+			BeatrunZCityLogLine(string.format("[Beatrun Z-City] fall %.0f units is above %d - no trick, Z-City takes the landing", fallHeight, MAX_HEIGHT))
 		end
 		return
 	end
 
 	if fallHeight < KNEE_HEIGHT then
 		Decline(ply, string.format("a %.0f unit fall is below %d", fallHeight, KNEE_HEIGHT))
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - too low for a roll", fallHeight, speed))
+		if BeatrunZCityLogEnabled() then
+			BeatrunZCityLogLine(string.format("[Beatrun Z-City] fall %.0f units / speed %.0f - too low for a roll", fallHeight, speed))
 		end
 		return
 	end
@@ -470,8 +469,8 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- Everything above the knee landing is the roll, so this is also the knee/roll boundary.
 	local bigFall = fallHeight > KNEE_MAX
 
-	if cvRollDebugLog and cvRollDebugLog:GetBool() then
-		print(string.format("[Beatrun Z-City] landing speed %.0f, fall height %.0f (%s) - roll accepted",
+	if BeatrunZCityLogEnabled() then
+		BeatrunZCityLogLine(string.format("[Beatrun Z-City] landing speed %.0f, fall height %.0f (%s) - roll accepted",
 			speed, fallHeight, bigFall and "big" or "small"))
 	end
 
@@ -512,9 +511,9 @@ local function TrySafetyRoll(ply, water, floater, speed)
 	-- same fall always has to give the same landing, that was the whole point of 2.21.14.
 	ply._BRZRollVariant = variant
 
-	if cvRollDebugLog and cvRollDebugLog:GetBool() then
+	if BeatrunZCityLogEnabled() then
 		local names = { [0] = "nothing", [1] = "land", [2] = "meroll", [3] = "merollcrouch" }
-		print(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %d, knees %d..%d, roll %d..%d, nothing > %d]",
+		BeatrunZCityLogLine(string.format("[Beatrun Z-City] fall %.0f -> variant %d (%s)  [nothing < %d, knees %d..%d, roll %d..%d, nothing > %d]",
 			fallHeight, variant, names[variant] or "?", KNEE_HEIGHT, KNEE_HEIGHT, KNEE_MAX,
 			KNEE_MAX + 1, MAX_HEIGHT, MAX_HEIGHT))
 	end
@@ -656,14 +655,14 @@ local function FallStunWrapper(ply, inwater, onfloater, speed)
 			if isfunction(ply.SetSafetyRollTime) then ply:SetSafetyRollTime(0) end
 			blocked = false
 
-			if cvRollDebugLog and cvRollDebugLog:GetBool() then
-				print("[Beatrun Z-City] no trick exists for this fall height - Z-City takes this landing")
+			if BeatrunZCityLogEnabled() then
+				BeatrunZCityLogLine("[Beatrun Z-City] no trick exists for this fall height - Z-City takes this landing")
 			end
 		end
 
 		if blocked then
-			if cvRollDebugLog and cvRollDebugLog:GetBool() then
-				print("[Beatrun Z-City] Z-City fallStun blocked - the roll owns this landing")
+			if BeatrunZCityLogEnabled() then
+				BeatrunZCityLogLine("[Beatrun Z-City] Z-City fallStun blocked - the roll owns this landing")
 			end
 			return true
 		end
@@ -713,8 +712,8 @@ local LightStunOriginal
 
 local function LightStunWrapper(ply, time)
 	if TrickOwnsLanding(ply) then
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print("[Beatrun Z-City] Z-City light stun (fake ragdoll) blocked - the trick owns this landing")
+		if BeatrunZCityLogEnabled() then
+			BeatrunZCityLogLine("[Beatrun Z-City] Z-City light stun (fake ragdoll) blocked - the trick owns this landing")
 		end
 		return
 	end
@@ -728,8 +727,8 @@ local FakeOriginal
 
 local function FakeWrapper(ply, ...)
 	if TrickOwnsLanding(ply) then
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print("[Beatrun Z-City] Z-City fake ragdoll (hg.Fake) blocked - the trick owns this landing")
+		if BeatrunZCityLogEnabled() then
+			BeatrunZCityLogLine("[Beatrun Z-City] Z-City fake ragdoll (hg.Fake) blocked - the trick owns this landing")
 		end
 		return
 	end
@@ -763,8 +762,8 @@ hook.Add("Think", "BeatrunZCity_StunGuardThink", function()
 	GUARD_NEXT_AT = now + 1
 	local a = InstallLightStunGuard()
 	local b = InstallFallStunGuard()
-	if cvRollDebugLog and cvRollDebugLog:GetBool() and (a or b) then
-		print("[Beatrun Z-City] landing guards re-installed")
+	if BeatrunZCityLogEnabled() and (a or b) then
+		BeatrunZCityLogLine("[Beatrun Z-City] landing guards re-installed")
 	end
 end)
 
@@ -842,8 +841,8 @@ if SERVER then
 			return -- Let Z-City handle normal fall damage
 		end
 
-		if cvRollDebugLog and cvRollDebugLog:GetBool() then
-			print(string.format("[Beatrun Z-City] fall damage call, speed %.0f - negated", speed))
+		if BeatrunZCityLogEnabled() then
+			BeatrunZCityLogLine(string.format("[Beatrun Z-City] fall damage call, speed %.0f - negated", speed))
 		end
 
 		if cvRollNoDamage and cvRollNoDamage:GetBool() then
@@ -863,7 +862,7 @@ end
 -- 2.21.21: one line at start-up with the numbers this copy actually runs with. If a saved config or an
 -- old server.cfg pins a stale value, it shows up here instead of silently turning every fall into a roll.
 timer.Simple(1, function()
-	print(string.format("[Beatrun Z-City %s] landing table (fixed): knees %d..%d, roll %d..%d, above %d no trick, min impact %.0f",
+	BeatrunZCityLogLine(string.format("[Beatrun Z-City %s] landing table (fixed): knees %d..%d, roll %d..%d, above %d no trick, min impact %.0f",
 		ADDON_VERSION, KNEE_HEIGHT, KNEE_MAX, KNEE_MAX + 1, MAX_HEIGHT, MAX_HEIGHT,
 		cvRollMinSpeed and cvRollMinSpeed:GetFloat() or 250))
 end)

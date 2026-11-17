@@ -275,9 +275,8 @@ function BeatrunRollAnimStart(variant, lowRollFlag, forced)
 	lastRollAnimAt = now
 	lastTrickAnimAt = now
 
-	local cvDbg2 = GetConVar("Beatrun_RollDebugLog")
-	if cvDbg2 and cvDbg2:GetBool() then
-		print(string.format("[Beatrun Z-City] roll anim start: %s (variant %d) at %.2f",
+	if BeatrunZCityLogEnabled() then
+		BeatrunZCityLogLine(string.format("[Beatrun Z-City] roll anim start: %s (variant %d) at %.2f",
 			tostring(animName), variant, now))
 	end
 

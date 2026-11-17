@@ -371,8 +371,7 @@ local DEFAULTS = {
 	["Beatrun_TrickCamHeight"] = "45",
 	["Beatrun_SlideHideBody"] = "1",
 	["Beatrun_SlideCamTilt"] = "1",
-	["Beatrun_AnimSet"] = "0",
-	["Beatrun_ZCity_DebugHUD"] = "1"
+	["Beatrun_AnimSet"] = "0"
 }
 
 local function ApplyDefaults()
