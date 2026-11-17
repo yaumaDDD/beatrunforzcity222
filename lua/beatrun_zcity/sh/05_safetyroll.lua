@@ -361,7 +361,7 @@ end
 
 -- 2.21.21: the one place that prints what happened on a landing. Always on, one line, prefixed with the
 -- version, and remembered on the player so a debug panel can repeat it.
-local ADDON_VERSION = "2.21.33"
+local ADDON_VERSION = "2.21.34"
 
 function ReportLanding(ply, what)
 	if IsValid(ply) and ply.IsPlayer and ply:IsPlayer() then

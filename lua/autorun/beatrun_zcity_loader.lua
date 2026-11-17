@@ -1,12 +1,12 @@
 -- Which copy is this? Two copies of the addon in garrysmod/addons makes the game load the older one,
 -- and the player keeps seeing the old version no matter how often they download the new zip. Print the
 -- real path (and shout if a second copy already initialised) so this is impossible to miss.
-local THIS_VERSION = "2.21.33"
+local THIS_VERSION = "2.21.34"
 local thisFile = (debug and debug.getinfo and debug.getinfo(1, "S") and debug.getinfo(1, "S").short_src) or "?"
 
 -- 2.21.33: the addon keeps the console silent. ONE command prints every log line it has:
 --   Beatrun_ZCity_Log 1
--- (0 turns it off again; the old Beatrun_RollDebugLog still works as well). Console commands such as
+-- (0 turns it off again; nothing else can turn it on). Console commands such as
 -- beatrun_zcity_version / beatrun_zcity_debug always print - they only run when you ask for them.
 if SERVER then
 	CreateConVar("Beatrun_ZCity_Log", "0", FCVAR_ARCHIVE, "Beatrun Z-City: print the addon's console log (one landing line per landing, climb decisions, camera wrap)", 0, 1)
@@ -15,11 +15,10 @@ else
 end
 
 local function LogOn()
+	-- One switch, off by default. Beatrun_RollDebugLog is deliberately NOT read: a value saved in cfg/
+	-- from an older build must not make the addon print on its own.
 	local cv = GetConVar("Beatrun_ZCity_Log")
-	if cv and cv:GetBool() then return true end
-	local old = GetConVar("Beatrun_RollDebugLog")
-	if old and old:GetBool() then return true end
-	return false
+	return (cv ~= nil) and cv:GetBool() or false
 end
 
 if LogOn() and BeatrunZCity and BeatrunZCity.Version and BeatrunZCity.Version ~= THIS_VERSION then

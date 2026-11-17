@@ -3,16 +3,15 @@
 local REP = { FCVAR_REPLICATED, FCVAR_ARCHIVE, FCVAR_NOTIFY }
 local REP_PLAIN = { FCVAR_REPLICATED, FCVAR_ARCHIVE }
 
--- 2.21.33: nothing is printed to the console by default. One command turns the whole log on:
---   Beatrun_ZCity_Log 1      (0 = silence again; the old Beatrun_RollDebugLog keeps working)
+-- 2.21.34: the console is silent from the very first frame. ONE switch, OFF by default:
+--   Beatrun_ZCity_Log 1      (0 = silence again)
+-- Only this convar is read. The old Beatrun_RollDebugLog is still registered so old configs load, but
+-- it is ignored on purpose: a saved "1" in cfg/ must never turn the log back on by itself.
 -- Diagnostic commands (beatrun_zcity_version, beatrun_zcity_debug, beatrun_zcity_camtest) print when
 -- you type them, whatever this switch says.
 function BeatrunZCityLogEnabled()
 	local cv = GetConVar("Beatrun_ZCity_Log")
-	if cv and cv:GetBool() then return true end
-	local old = GetConVar("Beatrun_RollDebugLog")
-	if old and old:GetBool() then return true end
-	return false
+	return (cv ~= nil) and cv:GetBool() or false
 end
 
 function BeatrunZCityLogLine(text)
@@ -49,7 +48,7 @@ CreateConVar("Beatrun_ZCity_ClimbReach", "60", REP, "Ledge climb: how far ahead 
 CreateConVar("Beatrun_ZCity_ClimbHoldDelay", "0.35", REP, "Ledge climb: how long you hang before the pull-up starts by itself", 0, 2)
 CreateConVar("Beatrun_ZCity_ClimbHeaveTime", "0.55", REP, "Ledge climb: duration of the pull-up (seconds)", 0.2, 1.5)
 CreateConVar("Beatrun_ZCity_ClimbCooldown", "0.45", REP, "Ledge climb: delay after a climb before the next grab can start", 0, 3)
-CreateConVar("Beatrun_RollDebugLog", "0", REP, "Print landing speeds and whether the roll accepted them", 0, 1)
+CreateConVar("Beatrun_RollDebugLog", "0", REP, "(ignored since 2.21.34) kept so old configs load - use Beatrun_ZCity_Log 1 to print the log", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideSteer", "0", REP, "Allow changing the slide course with strafe keys (0 = course is fixed)", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideShoot", "1", REP, "Allow free aiming and shooting during a slide", 0, 1)
 CreateConVar("Beatrun_ZCity_SlideYawLimit", "90", REP, "Maximum left/right look and aim angle (degrees) relative to slide direction while sliding with a weapon (0 = unlimited)", 0, 180)
