@@ -8,12 +8,70 @@
 -- its playback speed and how it is played (oneshot / loop / freeze) - see BeatrunZCBroadcastTrick in
 -- sh/02_helpers.lua. Each receiving client:
 --   * creates the same animation rig (models/new_climbanim.mdl or old_climbanim.mdl),
---   * creates a copy of that player's own model, parented to the rig with EF_BONEMERGE, so the player's
---     skin/bodygroups/colour are used and the body follows the rig's bones exactly like the local one,
+--   * creates a copy of that player's own model, parented to the rig with EF_BONEMERGE, so the body
+--     follows the rig's bones exactly like the local one and carries the player's full appearance -
+--     skin, bodygroups, clean submaterials (jacket/armour paint) and the ZCGloves glove id (2.21.37),
 --   * drives the rig's cycle itself (the pose is fully deterministic from the sent timing),
 --   * hides the player's static model for as long as the trick lasts and puts it back afterwards.
 
 local MODE_ONESHOT, MODE_LOOP, MODE_FREEZE = 0, 1, 2
+
+-- 2.21.37: the body copy also carries the player's full Z-City appearance, not just the base model.
+-- Until now it copied skin + bodygroups + colour, which is enough for a vanilla model but not for a
+-- player dressed by Z-City Big Appearance / Appearance Mod + zcity_csgo_gloves: jackets, armour and
+-- gloves are painted through SUBMATERIALS (0..31) and the glove id lives in the "zcg_glove" NWString,
+-- so on somebody else's screen the rolling body looked undressed/plain.
+-- The copy therefore goes through the very same sanitised path the owner's own trick body uses
+-- (cl/01_bigappearance_compat.lua): skin, bodygroups, clean submaterials with ZCGloves' hide material
+-- ("null" / "zcity_csgo_gloves/invisible") never copied - that hide material is exactly what used to
+-- eat the hands/forearms in 2.21.5. It is re-synced a few times per second because the jacket/glove
+-- bodygroups and the glove id can change mid-trick.
+local APPEARANCE_SYNC_INTERVAL = 0.2
+
+local function ApplyAppearance(ply, body, initial)
+	if not IsValid(ply) or not IsValid(body) then return end
+
+	local app = BeatrunZCityAppCompat
+	if app and isfunction(app.SyncTrickModelAppearance) then
+		pcall(app.SyncTrickModelAppearance, ply, body, true, initial and true or false)
+		return
+	end
+
+	-- Fallback when the appearance module is missing: the same clean copy, without its bookkeeping.
+	if ply:GetModel() ~= body:GetModel() then return end
+
+	if initial and ply.GetPlayerColor then
+		body.GetPlayerColor = function()
+			return IsValid(ply) and ply:GetPlayerColor() or vector_origin
+		end
+	end
+
+	pcall(body.SetSkin, body, ply:GetSkin() or 0)
+
+	local groups = ply:GetBodyGroups()
+	if istable(groups) then
+		for i = 1, #groups do
+			local g = groups[i]
+			if istable(g) and isnumber(g.id) then
+				local value = ply:GetBodygroup(g.id)
+				if isnumber(value) and body:GetBodygroup(g.id) ~= value then
+					pcall(body.SetBodygroup, body, g.id, value)
+				end
+			end
+		end
+	end
+
+	local zcg = ply:GetNWString("zcg_glove", "")
+	if body:GetNWString("zcg_glove", "") ~= zcg then body:SetNWString("zcg_glove", zcg) end
+
+	for i = 0, 31 do
+		local sub = ply:GetSubMaterial(i) or ""
+		if sub == "null" or sub == "zcity_csgo_gloves/invisible" then sub = "" end
+		if (body:GetSubMaterial(i) or "") ~= sub then
+			body:SetSubMaterial(i, sub ~= "" and sub or nil)
+		end
+	end
+end
 
 -- 2.21.36: the pose does not disappear in one frame any more. When a trick ends the animation keeps its
 -- last frame and fades out over FADE_TIME while the player's own model comes back underneath it - the
@@ -85,26 +143,18 @@ local function Build(ply)
 		body:AddEffects(EF_BONEMERGE)
 		body:SetNoDraw(true)
 
-		-- Same look as the player himself: skin, bodygroups, scale, colour, material.
+		-- Same look as the player himself: scale, colour, material and - 2.21.37 - the whole Z-City
+		-- appearance (skin, bodygroups, submaterials, gloves), see ApplyAppearance above.
 		pcall(function()
-			body:SetSkin(ply:GetSkin())
 			body:SetModelScale(ply:GetModelScale(), 0)
 			body:SetColor(ply:GetColor())
 			body:SetMaterial(ply:GetMaterial())
 		end)
 
-		local groups = ply:GetBodyGroups()
-		if istable(groups) then
-			for i = 1, #groups do
-				local g = groups[i]
-				if istable(g) and isnumber(g.id) then
-					local value = ply:GetBodygroup(g.id)
-					if isnumber(value) then
-						pcall(body.SetBodygroup, body, g.id, value)
-					end
-				end
-			end
-		end
+		-- ZCGloves and the appearance pass look the owner player up through this NWEntity.
+		body:SetNWEntity("ply", ply)
+		ApplyAppearance(ply, body, true)
+		pcall(body.SetupBones, body)
 	end
 
 	-- Hide the player's own model (Z-City draws him through a per-entity RenderOverride, so that is the
@@ -215,6 +265,12 @@ hook.Add("Think", "BeatrunZCity_RemoteTricks", function()
 			t.rig:SetCycle(cycle)
 			t.rig:SetupBones()
 
+			-- 2.21.37: keep the appearance in step with the player (jacket/glove change mid-trick).
+			if now - (t.synced or -1) >= APPEARANCE_SYNC_INTERVAL then
+				t.synced = now
+				ApplyAppearance(ply, t.body, false)
+			end
+
 			if t.mode == MODE_ONESHOT and frac >= 1 then
 				if t.anim == "hanghardstart" or t.anim == "hanghardstart2" then
 					-- The grab animation is over, the player keeps hanging until the pull-up arrives.
@@ -246,6 +302,19 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_RemoteTricksDraw", function(
 
 	for ply, t in pairs(remote) do
 		if IsValid(t.body) then
+			-- 2.21.37: let Z-City's own appearance pass paint the copy exactly like it paints the
+			-- player (jacket/armour materials, ZCGloves), with the same guard the owner's body gets
+			-- so a shrink/grow of the hand bones never survives the frame.
+			pcall(hook.Run, "CoolPostDrawAppearance", t.body, ply)
+			local app = BeatrunZCityAppCompat
+			if app then
+				if isfunction(app.PostZCGDrawGuard) then
+					pcall(app.PostZCGDrawGuard, t.body)
+				elseif isfunction(app.ProtectNonFingerArmBones) then
+					pcall(app.ProtectNonFingerArmBones, t.body)
+				end
+			end
+
 			local a = t.alpha
 			if isnumber(a) and a < 1 then
 				render.SetBlend(math.max(0, a))
@@ -254,6 +323,8 @@ hook.Add("PostDrawOpaqueRenderables", "BeatrunZCity_RemoteTricksDraw", function(
 			else
 				t.body:DrawModel()
 			end
+
+			pcall(hook.Run, "PostDrawAppearance", t.body, ply)
 		end
 	end
 end)
